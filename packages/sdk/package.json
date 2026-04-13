@@ -1,0 +1,68 @@
+{
+  "name": "@balchemy/agent-sdk",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": false,
+  "description": "Balchemy external AI agent onboarding + MCP SDK — ERC-8004 onboarding, Solana/EVM trading, 100 tools via MCP",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md",
+    "docs"
+  ],
+  "keywords": [
+    "balchemy",
+    "mcp",
+    "model-context-protocol",
+    "ai-agent",
+    "erc8004",
+    "solana",
+    "evm",
+    "base",
+    "crypto",
+    "trading",
+    "onboarding",
+    "defi",
+    "wallet",
+    "typescript"
+  ],
+  "homepage": "https://balchemy.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/balchemy/balchemy-agent",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/balchemy/balchemy-agent/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "jest",
+    "test:cov": "jest --coverage",
+    "prepublishOnly": "pnpm run typecheck && pnpm run build"
+  },
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "22.17.2",
+    "jest": "^30.0.0",
+    "ts-jest": "^29.3.4",
+    "typescript": "5.8.3"
+  }
+}

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+*.env
+agent.config.yaml
+.DS_Store
+*.tgz

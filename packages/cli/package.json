@@ -1,0 +1,58 @@
+{
+  "name": "create-balchemy-agent",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "description": "Scaffold and run a Balchemy autonomous AI trading agent in 5 minutes",
+  "main": "dist/index.js",
+  "bin": {
+    "create-balchemy-agent": "dist/index.js",
+    "balchemy-agent": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "assets",
+    "templates",
+    "README.md"
+  ],
+  "keywords": [
+    "balchemy",
+    "ai-agent",
+    "crypto",
+    "trading",
+    "mcp",
+    "solana",
+    "cli"
+  ],
+  "homepage": "https://balchemy.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/balchemy/balchemy-agent",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/balchemy/balchemy-agent/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@balchemy/agent-sdk": "workspace:^",
+    "@inkjs/ui": "^2.0.0",
+    "dotenv": "^16.0.0",
+    "ink": "^6.0.0",
+    "js-yaml": "^4.1.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "22.17.2",
+    "@types/react": "^19.0.0",
+    "typescript": "5.8.3"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "prepublishOnly": "pnpm run typecheck && pnpm run build"
+  }
+}
