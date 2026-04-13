@@ -6,7 +6,7 @@
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentLoop } from '@balchemy/agent-sdk';
+import { AgentLoop } from '@balchemyai/agent-sdk';
 import { loadConfig } from './config-loader.js';
 
 function loadDotEnv(configPath: string): void {

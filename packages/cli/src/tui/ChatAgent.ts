@@ -12,7 +12,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { BalchemyMcpClient } from "@balchemy/agent-sdk";
+import type { BalchemyMcpClient } from "@balchemyai/agent-sdk";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

@@ -1,11 +1,11 @@
-# @balchemy/agent-sdk
+# @balchemyai/agent-sdk
 
 TypeScript SDK for Balchemy external AI agents. Handles onboarding (SIWE wallet-based or walletless Identity flow), MCP tool access, token lifecycle management, and real-time SSE event streaming.
 
 ## Installation
 
 ```sh
-npm install @balchemy/agent-sdk
+npm install @balchemyai/agent-sdk
 ```
 
 ## Auth Paths
@@ -15,7 +15,7 @@ npm install @balchemy/agent-sdk
 Use this when your agent controls a Solana or EVM wallet and can sign messages.
 
 ```ts
-import { BalchemyAgentSdk } from "@balchemy/agent-sdk";
+import { BalchemyAgentSdk } from "@balchemyai/agent-sdk";
 
 const sdk = new BalchemyAgentSdk({
   apiBaseUrl: "https://api.balchemy.ai/api",
@@ -52,7 +52,7 @@ const mcp = sdk.connectMcp({
 Use this when your agent has an HMAC-signed identity token (for balchemy native) or ES256 JWT (for external providers) from a provider registered with Balchemy.
 
 ```ts
-import { BalchemyAgentSdk } from "@balchemy/agent-sdk";
+import { BalchemyAgentSdk } from "@balchemyai/agent-sdk";
 
 const sdk = new BalchemyAgentSdk({
   apiBaseUrl: "https://api.balchemy.ai/api",
@@ -124,8 +124,8 @@ Pass `scope` during onboarding to receive an MCP key with the appropriate permis
 All SDK methods throw `AgentSdkError` on failure.
 
 ```ts
-import { AgentSdkError } from "@balchemy/agent-sdk";
-import type { AgentSdkErrorCode } from "@balchemy/agent-sdk";
+import { AgentSdkError } from "@balchemyai/agent-sdk";
+import type { AgentSdkErrorCode } from "@balchemyai/agent-sdk";
 
 try {
   const result = await mcp.agentExecute({ instruction: "..." });
@@ -142,7 +142,7 @@ try {
 ## Tool Response Helpers
 
 ```ts
-import { getToolText, parseToolJson, isToolError } from "@balchemy/agent-sdk";
+import { getToolText, parseToolJson, isToolError } from "@balchemyai/agent-sdk";
 
 const response = await mcp.agentPortfolio();
 
@@ -157,7 +157,7 @@ if (isToolError(response)) {
 ## Token Management
 
 ```ts
-import { TokenStore } from "@balchemy/agent-sdk";
+import { TokenStore } from "@balchemyai/agent-sdk";
 
 const store = new TokenStore({
   // Called when the stored token nears expiry — return a fresh OnboardingResponse
@@ -175,7 +175,7 @@ const token = await store.get(); // auto-refreshes if expiry < threshold
 The `OnboardingResponse` includes an `identityAccess` field when the platform issues a short-lived access token alongside the MCP key.
 
 ```ts
-import type { IdentityAccess } from "@balchemy/agent-sdk";
+import type { IdentityAccess } from "@balchemyai/agent-sdk";
 
 const access: IdentityAccess | undefined = response.identityAccess;
 if (access) {
@@ -187,8 +187,8 @@ if (access) {
 ## SSE Event Streaming
 
 ```ts
-import { SseEventStream } from "@balchemy/agent-sdk";
-import type { SseEvent } from "@balchemy/agent-sdk";
+import { SseEventStream } from "@balchemyai/agent-sdk";
+import type { SseEvent } from "@balchemyai/agent-sdk";
 
 const stream = new SseEventStream(
   "https://api.balchemy.ai/api/events",
@@ -251,7 +251,7 @@ To enable agent onboarding, the following environment variables must be configur
 
 1. Install the SDK:
    ```sh
-   npm install @balchemy/agent-sdk
+   npm install @balchemyai/agent-sdk
    ```
 
 2. Create an MCP API key for your bot via the Hub UI: `Hub > Your Bot > API Keys > Create Key`.

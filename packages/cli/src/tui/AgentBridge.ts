@@ -1,7 +1,7 @@
 // src/tui/AgentBridge.ts
 import { randomUUID } from "node:crypto";
-import { AgentLoop, connectMcp } from "@balchemy/agent-sdk";
-import type { AgentLoopConfig, BalchemyMcpClient } from "@balchemy/agent-sdk";
+import { AgentLoop, connectMcp } from "@balchemyai/agent-sdk";
+import type { AgentLoopConfig, BalchemyMcpClient } from "@balchemyai/agent-sdk";
 import type { ChatMessage, StatusData, TradeInfo, TuiConfig } from "./types.js";
 import { ChatAgent } from "./ChatAgent.js";
 
@@ -71,7 +71,7 @@ export class AgentBridge {
       llmTimeoutMs: this.config.llmTimeoutMs ?? 15_000,
       mcpFetchFn: this.replayFetch,
 
-      onEvent: (event) => {
+      onEvent: (event: { data: unknown; type: string }) => {
         const data = event.data as Record<string, unknown> | undefined;
         const eventType = data?.subscription_type ?? data?.event_type ?? event.type;
         // Only show subscription events in chat, skip heartbeats/internal
@@ -87,13 +87,13 @@ export class AgentBridge {
         this.setters.setStatus((prev) => ({ ...prev, eventsReceived: prev.eventsReceived + 1 }));
       },
 
-      onDecision: (decision) => {
+      onDecision: (decision: { action: string; token?: string; amount?: string; reasoning?: string }) => {
         const reasoning = decision.reasoning ?? `${decision.action} ${decision.token ?? ""} ${decision.amount ?? ""}`;
         this.addAgentMessage(reasoning);
         this.setters.setStatus((prev) => ({ ...prev, decisionsExecuted: prev.decisionsExecuted + 1 }));
       },
 
-      onTradeResult: (result) => {
+      onTradeResult: (result: { action: string; token?: string; amount?: string; response: string }) => {
         const trade: TradeInfo = {
           token: result.token ?? "unknown",
           action: result.action as "buy" | "sell",
@@ -110,11 +110,11 @@ export class AgentBridge {
         }));
       },
 
-      onError: (err) => {
+      onError: (err: Error) => {
         this.addErrorMessage(err.message);
       },
 
-      onStatusChange: (status) => {
+      onStatusChange: (status: { status: string; llmCostToday: number; sseConnected: boolean; uptime: number }) => {
         this.setters.setStatus((prev) => ({
           ...prev,
           status: status.status,
@@ -150,7 +150,10 @@ export class AgentBridge {
       );
       this.addAgentMessage(reply);
     } catch (err: unknown) {
-      this.addErrorMessage(`Greeting failed: ${err instanceof Error ? err.message : String(err)}`);
+      const raw = err instanceof Error ? err.message : String(err);
+      // Truncate long API errors — show first line only
+      const short = raw.split("\n")[0].slice(0, 120);
+      this.addErrorMessage(`LLM error: ${short}`);
     }
   }
 

@@ -6,7 +6,7 @@ FROM node:20-slim
 WORKDIR /app
 
 # Install the agent SDK globally so runner is available as a binary
-RUN npm install -g @balchemy/agent-sdk create-balchemy-agent
+RUN npm install -g @balchemyai/agent-sdk create-balchemy-agent
 
 # Copy user config files
 COPY agent.config.yaml ./

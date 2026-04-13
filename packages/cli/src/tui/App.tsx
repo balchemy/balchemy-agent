@@ -1,6 +1,6 @@
 // src/tui/App.tsx
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Box, useApp } from "ink";
+import { Box, Text, useApp } from "ink";
 import { ChatPanel } from "./ChatPanel.js";
 import { StatusPanel } from "./StatusPanel.js";
 import { AgentBridge } from "./AgentBridge.js";
@@ -76,9 +76,7 @@ export function App({ config }: AppProps): React.ReactElement {
   }, [config, addMessage]);
 
   const handleSend = useCallback(async (text: string) => {
-    if (!bridgeRef.current) return;
-
-    // Slash commands
+    // Slash commands work even without bridge
     if (text.startsWith("/")) {
       const cmd = text.split(" ")[0].toLowerCase();
       switch (cmd) {
@@ -86,33 +84,41 @@ export function App({ config }: AppProps): React.ReactElement {
         case "/exit":
         case "/quit": {
           addSystemMsg("Shutting down...");
-          await bridgeRef.current.stop();
+          await bridgeRef.current?.stop();
           exit();
           return;
         }
         case "/new": {
           addSystemMsg("Creating new agent... Restarting wizard.");
           clearAgent();
-          await bridgeRef.current.stop();
+          await bridgeRef.current?.stop();
           exit();
-          // After exit, index.ts will re-run and hit the wizard
           return;
         }
         case "/switch": {
           addSystemMsg("Switching agent... Clearing cache.");
           clearAgent();
-          await bridgeRef.current.stop();
+          await bridgeRef.current?.stop();
           exit();
+          return;
+        }
+        case "/provider": {
+          addSystemMsg(
+            "To change your LLM provider, run:\n" +
+            "  npx balchemy init\n" +
+            "This starts the setup wizard where you can pick a new provider and model."
+          );
           return;
         }
         case "/help": {
           addSystemMsg(
             "Commands:\n" +
-            "  /stop    — Stop agent and exit\n" +
-            "  /new     — Create a new agent (same LLM)\n" +
-            "  /switch  — Switch to different agent\n" +
-            "  /clear   — Clear chat history\n" +
-            "  /help    — Show this help"
+            "  /stop      Stop agent and exit\n" +
+            "  /clear     Clear chat history\n" +
+            "  /new       Create a new agent\n" +
+            "  /switch    Switch to different agent\n" +
+            "  /provider  Change LLM provider\n" +
+            "  /help      Show this help"
           );
           return;
         }
@@ -127,13 +133,31 @@ export function App({ config }: AppProps): React.ReactElement {
       }
     }
 
-    await bridgeRef.current.sendUserMessage(text);
+    if (bridgeRef.current) {
+      await bridgeRef.current.sendUserMessage(text);
+    } else {
+      addSystemMsg("Agent not ready yet. Try again in a moment.");
+    }
   }, [exit, addSystemMsg]);
 
   return (
-    <Box flexDirection="row" height="100%">
-      <ChatPanel messages={messages} onSend={handleSend} inputActive={inputActive} />
-      <StatusPanel status={status} />
+    <Box flexDirection="column" height="100%">
+      {/* Header */}
+      <Box borderStyle="single" borderColor="cyan" borderBottom borderTop={false} borderLeft={false} borderRight={false} paddingX={1}>
+        <Text color="cyan" bold>BALCHEMY</Text>
+        <Text dimColor> | </Text>
+        <Text dimColor>{config.publicId}</Text>
+        <Text dimColor> | </Text>
+        <Text color={status.sseConnected ? "green" : "yellow"}>{status.sseConnected ? "LIVE" : "CONNECTING"}</Text>
+        <Text dimColor> | </Text>
+        <Text dimColor>{config.shadowMode ? "SHADOW" : "LIVE MODE"}</Text>
+      </Box>
+
+      {/* Main content */}
+      <Box flexDirection="row" flexGrow={1}>
+        <ChatPanel messages={messages} onSend={handleSend} inputActive={inputActive} />
+        <StatusPanel status={status} />
+      </Box>
     </Box>
   );
 }

@@ -6,7 +6,7 @@ Autonomous AI trading agent infrastructure for Solana and Base chains.
 
 | Package | npm | Description |
 |---------|-----|-------------|
-| [`@balchemy/agent-sdk`](packages/sdk) | [![npm](https://img.shields.io/npm/v/@balchemy/agent-sdk)](https://www.npmjs.com/package/@balchemy/agent-sdk) | TypeScript SDK — MCP client, AgentLoop, onboarding |
+| [`@balchemyai/agent-sdk`](packages/sdk) | [![npm](https://img.shields.io/npm/v/@balchemyai/agent-sdk)](https://www.npmjs.com/package/@balchemyai/agent-sdk) | TypeScript SDK — MCP client, AgentLoop, onboarding |
 | [`create-balchemy-agent`](packages/cli) | [![npm](https://img.shields.io/npm/v/create-balchemy-agent)](https://www.npmjs.com/package/create-balchemy-agent) | CLI tool — interactive wizard + TUI |
 
 ## Quick Start
@@ -28,11 +28,11 @@ Your LLM is the brain. Balchemy provides the infrastructure — wallets, trading
 ## For Developers
 
 ```bash
-npm install @balchemy/agent-sdk
+npm install @balchemyai/agent-sdk
 ```
 
 ```typescript
-import { connectMcp, AgentLoop } from "@balchemy/agent-sdk";
+import { connectMcp, AgentLoop } from "@balchemyai/agent-sdk";
 
 const mcp = connectMcp({
   endpoint: "https://api.balchemy.ai/mcp/YOUR_PUBLIC_ID",

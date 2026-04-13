@@ -6,7 +6,7 @@
 
 import * as fs from 'fs';
 import * as yaml from 'js-yaml';
-import type { AgentLoopConfig, LlmProvider } from '@balchemy/agent-sdk';
+import type { AgentLoopConfig, LlmProvider } from '@balchemyai/agent-sdk';
 
 interface RawConfig {
   mcp_endpoint?: unknown;
