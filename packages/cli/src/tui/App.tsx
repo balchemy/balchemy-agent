@@ -2,6 +2,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { Select, TextInput } from "@inkjs/ui";
+import { execSync, execFileSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { ChatPanel } from "./ChatPanel.js";
 import { StatusPanel } from "./StatusPanel.js";
 import { AgentBridge } from "./AgentBridge.js";
@@ -138,8 +140,14 @@ export function App({ config }: AppProps): React.ReactElement {
       bridge.refreshBalance().catch(() => {});
     }, 60_000);
 
+    // Background update checker — every 10 minutes
+    const updateInterval = setInterval(() => {
+      void checkAndApplyUpdate(addSystemMsg, exit);
+    }, 10 * 60_000);
+
     return () => {
       clearInterval(balanceInterval);
+      clearInterval(updateInterval);
       bridge.stop().catch(() => {});
     };
   }, [config, addMessage, confirmTrade]);
@@ -538,4 +546,42 @@ export function App({ config }: AppProps): React.ReactElement {
       </Box>
     </Box>
   );
+}
+
+// ── Background auto-update ────────────────────────────────────────────────
+
+async function checkAndApplyUpdate(
+  addSystemMsg: (text: string) => void,
+  exit: () => void,
+): Promise<void> {
+  try {
+    const res = await fetch("https://registry.npmjs.org/balchemy/latest", {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { version?: string };
+    const latest = data.version;
+    if (!latest) return;
+
+    const require = createRequire(import.meta.url);
+    const pkg = require("../../package.json") as { version: string };
+    if (latest === pkg.version) return;
+
+    addSystemMsg(`Updating to v${latest}...`);
+    try {
+      execSync(`npm install -g balchemy@${latest}`, { stdio: "ignore", timeout: 30_000 });
+      addSystemMsg(`Updated to v${latest}. Restarting...`);
+      // Graceful restart: re-exec the CLI with same args
+      setTimeout(() => {
+        try {
+          execFileSync("balchemy", process.argv.slice(2), { stdio: "inherit" });
+        } catch { /* re-exec failed */ }
+        process.exit(0);
+      }, 500);
+    } catch {
+      // Silent — update failed, continue with current version
+    }
+  } catch {
+    // Silent — network error, skip this check
+  }
 }
