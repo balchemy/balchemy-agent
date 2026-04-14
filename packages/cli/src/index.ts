@@ -59,15 +59,26 @@ async function checkForUpdate(): Promise<boolean> {
       rl.close();
 
       if (answer.toLowerCase() === "y" || answer.toLowerCase() === "yes") {
+        // Detect if running via npx (no global binary to re-exec)
+        const isNpx = Boolean(
+          process.env.npm_execpath?.includes("npx") ||
+          process.env._?.includes("npx") ||
+          process.env.npm_command === "exec",
+        );
+
         process.stdout.write(`  Updating to ${T}${latest}${R}...\n`);
         const { execSync } = await import("child_process");
         try {
           execSync(`npm install -g balchemy@${latest}`, { stdio: "inherit" });
-          process.stdout.write(`\n  ${T}Updated!${R} Restarting...\n\n`);
-          // Re-exec with the new version
-          const { execFileSync } = await import("child_process");
-          execFileSync("balchemy", process.argv.slice(2), { stdio: "inherit" });
-          process.exit(0);
+          if (isNpx) {
+            process.stdout.write(`\n  ${T}Updated!${R} Run ${W}balchemy${R} to use the new version.\n\n`);
+            // Continue with current version — don't re-exec, npx cache may be stale
+          } else {
+            process.stdout.write(`\n  ${T}Updated!${R} Restarting...\n\n`);
+            const { execFileSync } = await import("child_process");
+            execFileSync("balchemy", process.argv.slice(2), { stdio: "inherit" });
+            process.exit(0);
+          }
         } catch {
           process.stdout.write(`  ${D}Update failed. Continuing with ${current}.${R}\n\n`);
         }
@@ -113,7 +124,7 @@ async function main(): Promise<void> {
       await startTui({
         mcpEndpoint: config.mcpEndpoint,
         apiKey: config.apiKey,
-        llmProvider: config.llmProvider as "anthropic" | "openai",
+        llmProvider: config.llmProvider,
         llmApiKey: config.llmApiKey,
         llmModel: config.llmModel,
         llmBaseUrl: config.llmBaseUrl,
@@ -161,7 +172,7 @@ async function main(): Promise<void> {
           await startTui({
             mcpEndpoint: cached.mcpEndpoint,
             apiKey: cached.apiKey,
-            llmProvider: cached.llmProvider as "anthropic" | "openai",
+            llmProvider: cached.llmProvider,
             llmApiKey: cached.llmApiKey,
             llmModel: cached.llmModel,
             llmBaseUrl: cached.llmBaseUrl,

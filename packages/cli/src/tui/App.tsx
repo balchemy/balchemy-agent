@@ -1,6 +1,6 @@
 // src/tui/App.tsx
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Box, Text, useApp, useInput } from "ink";
+import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { Select, TextInput } from "@inkjs/ui";
 import { ChatPanel } from "./ChatPanel.js";
 import { StatusPanel } from "./StatusPanel.js";
@@ -16,7 +16,6 @@ const INITIAL_STATUS: StatusData = {
   balanceUsd: 0,
   wallets: [],
   activeTrades: [],
-  recentTools: [],
   eventsReceived: 0,
   decisionsExecuted: 0,
   tradesExecuted: 0,
@@ -55,6 +54,8 @@ interface AppProps {
 
 export function App({ config }: AppProps): React.ReactElement {
   const { exit } = useApp();
+  const { stdout } = useStdout();
+  const termWidth = stdout?.columns ?? 80;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<StatusData>({
     ...INITIAL_STATUS,
@@ -410,7 +411,7 @@ export function App({ config }: AppProps): React.ReactElement {
         )}
       </Box>
       <Box>
-        <Text dimColor>{"\u2500".repeat(80)}</Text>
+        <Text dimColor>{"\u2500".repeat(Math.max(termWidth - 4, 20))}</Text>
       </Box>
 
       {/* Main content */}
@@ -490,7 +491,7 @@ export function App({ config }: AppProps): React.ReactElement {
 
       {/* Bottom shortcut bar */}
       <Box paddingX={1} gap={1}>
-        <Text dimColor>{"\u2500".repeat(80)}</Text>
+        <Text dimColor>{"\u2500".repeat(Math.max(termWidth - 4, 20))}</Text>
       </Box>
       <Box paddingX={1} gap={2}>
         <Text><Text color="cyan" bold>^S</Text><Text dimColor> Settings</Text></Text>

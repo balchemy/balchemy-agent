@@ -4,6 +4,7 @@ import { AgentLoop, connectMcp } from "@balchemyai/agent-sdk";
 import type { AgentLoopConfig, BalchemyMcpClient } from "@balchemyai/agent-sdk";
 import type { ChatMessage, StatusData, TradeInfo, TuiConfig } from "./types.js";
 import { ChatAgent } from "./ChatAgent.js";
+import { loadAgent } from "../agent-store.js";
 
 /** Truncate verbose API errors (429 JSON blobs, stack traces) to a readable one-liner. */
 function truncateError(raw: string): string {
@@ -80,7 +81,7 @@ export class AgentBridge {
     // Init the ChatAgent (external LLM with tool-calling)
     this.chatAgent = new ChatAgent(
       {
-        llmProvider: this.config.llmProvider,
+        llmProvider: this.config.llmProvider as "anthropic" | "openai",
         llmApiKey: this.config.llmApiKey,
         llmModel: this.config.llmModel,
         llmBaseUrl: this.config.llmBaseUrl,
@@ -97,7 +98,7 @@ export class AgentBridge {
     const loopConfig: AgentLoopConfig = {
       mcpEndpoint: this.config.mcpEndpoint,
       apiKey: this.config.apiKey,
-      llmProvider: this.config.llmProvider,
+      llmProvider: this.config.llmProvider as "anthropic" | "openai" | "custom",
       llmApiKey: this.config.llmApiKey,
       llmModel: this.config.llmModel,
       llmBaseUrl: this.config.llmBaseUrl,
@@ -336,8 +337,16 @@ export class AgentBridge {
     }
   }
 
-  /** Get current local config for settings display. */
+  /** Get current local config for settings display. Reads from disk to catch recent saves. */
   getLocalConfig(): { provider: string; model: string; maxDailyCost: number } {
+    const saved = loadAgent();
+    if (saved) {
+      return {
+        provider: saved.llmProvider ?? this.config.llmProvider,
+        model: saved.llmModel ?? this.config.llmModel ?? "(default)",
+        maxDailyCost: saved.maxDailyLlmCost ?? this.config.maxDailyLlmCost ?? 5,
+      };
+    }
     return {
       provider: this.config.llmProvider,
       model: this.config.llmModel ?? "(default)",

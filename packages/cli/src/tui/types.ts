@@ -30,19 +30,11 @@ export interface WalletInfo {
   address: string;
 }
 
-export interface ToolCall {
-  name: string;
-  durationMs: number;
-  success: boolean;
-  timestamp: number;
-}
-
 export interface StatusData {
   balanceSol: number;
   balanceUsd: number;
   wallets: WalletInfo[];
   activeTrades: TradeInfo[];
-  recentTools: ToolCall[];
   eventsReceived: number;
   decisionsExecuted: number;
   tradesExecuted: number;
@@ -58,7 +50,7 @@ export interface StatusData {
 export interface TuiConfig {
   mcpEndpoint: string;
   apiKey: string;
-  llmProvider: "anthropic" | "openai";
+  llmProvider: string;
   llmApiKey: string;
   llmModel?: string;
   llmBaseUrl?: string;
