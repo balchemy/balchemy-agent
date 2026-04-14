@@ -104,10 +104,10 @@ export function ChatPanel({
   const visibleMessages = messages.slice(-100);
   const [inputKey, setInputKey] = useState(0);
 
-  const handleSubmit = useCallback((value: string) => {
+  const handleSubmit = useCallback(async (value: string) => {
     if (value.trim()) {
-      onSend(value.trim());
       setInputKey((k) => k + 1);
+      await onSend(value.trim());
     }
   }, [onSend]);
 
