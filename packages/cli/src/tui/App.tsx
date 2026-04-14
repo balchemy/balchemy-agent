@@ -29,7 +29,7 @@ const INITIAL_STATUS: StatusData = {
 
 // ── Settings definitions ─────────────────────────────────────────────────────
 
-type AppMode = "chat" | "settings-select" | "settings-edit-select" | "settings-edit-text";
+type AppMode = "chat" | "settings-select" | "settings-edit-select" | "settings-edit-text" | "settings-edit-apikey";
 
 interface SettingItem {
   key: string;
@@ -230,10 +230,28 @@ export function App({ config }: AppProps): React.ReactElement {
     }
   }, []);
 
-  // Provider/select value chosen
+  // Provider/select value chosen — if provider, also ask for API key
+  const [pendingProvider, setPendingProvider] = useState<string | null>(null);
+
   const handleSelectValue = useCallback((value: string) => {
+    const item = SETTINGS_ITEMS[settingsEditIndex];
+    if (item?.key === "provider") {
+      // Save provider, then ask for API key
+      const agent = loadAgent();
+      if (agent) {
+        agent.llmProvider = value;
+        saveAgent(agent);
+      }
+      const vals = { ...settingsValues, provider: value };
+      setSettingsValues(vals);
+      setPendingProvider(value);
+      setSettingsInputKey((k) => k + 1);
+      setAppMode("settings-edit-apikey");
+      addSystemMsg(`Provider \u2192 ${value}. Now enter your API key.`);
+      return;
+    }
     void saveSettingValue(settingsEditIndex, value);
-  }, [settingsEditIndex]);
+  }, [settingsEditIndex, settingsValues, addSystemMsg]);
 
   // Text value submitted
   const handleTextValue = useCallback((value: string) => {
@@ -244,6 +262,25 @@ export function App({ config }: AppProps): React.ReactElement {
     }
     void saveSettingValue(settingsEditIndex, value.trim());
   }, [settingsEditIndex]);
+
+  // API key submitted (after provider change)
+  const handleApiKeyValue = useCallback((value: string) => {
+    if (!value.trim()) {
+      setAppMode("settings-select");
+      setSettingsEditIndex(-1);
+      setPendingProvider(null);
+      return;
+    }
+    const agent = loadAgent();
+    if (agent) {
+      agent.llmApiKey = value.trim();
+      saveAgent(agent);
+      addSystemMsg(`API key saved for ${pendingProvider}. Restart to apply.`);
+    }
+    setPendingProvider(null);
+    setAppMode("settings-select");
+    setSettingsEditIndex(-1);
+  }, [pendingProvider, addSystemMsg]);
 
   const saveSettingValue = useCallback(async (index: number, value: string) => {
     const item = SETTINGS_ITEMS[index];
@@ -410,6 +447,21 @@ export function App({ config }: AppProps): React.ReactElement {
               key={settingsInputKey}
               placeholder="Enter new value..."
               onSubmit={handleTextValue}
+            />
+          </Box>
+        </Box>
+      )}
+
+      {appMode === "settings-edit-apikey" && (
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} flexDirection="column">
+          <Text color="yellow" bold>API Key for {pendingProvider}</Text>
+          <Text dimColor>Paste your API key (esc to skip)</Text>
+          <Box>
+            <Text color="yellow">{"\u276f"} </Text>
+            <TextInput
+              key={settingsInputKey}
+              placeholder="sk-... or key-..."
+              onSubmit={handleApiKeyValue}
             />
           </Box>
         </Box>

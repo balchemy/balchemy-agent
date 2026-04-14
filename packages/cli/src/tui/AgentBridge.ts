@@ -273,19 +273,43 @@ export class AgentBridge {
 
   /** Fetch server-side settings (slippage, strategy) from MCP. */
   async fetchRemoteSettings(): Promise<{ slippageBps?: number; strategy?: string }> {
+    const result: { slippageBps?: number; strategy?: string } = {};
+
+    // Try get_behavior_rules for strategy/rules info
     try {
-      const resp = await this.mcp.callTool("setup_agent", { action: "get_status" });
+      const resp = await this.mcp.callTool("get_behavior_rules", {});
       const text = resp.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
       let parsed: Record<string, unknown>;
       try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { parsed = {}; }
       const structured = parsed.structured as Record<string, unknown> | undefined;
-      return {
-        slippageBps: typeof structured?.slippageBps === "number" ? structured.slippageBps : undefined,
-        strategy: typeof structured?.naturalLanguageRules === "string" ? structured.naturalLanguageRules : undefined,
-      };
+      const rules = structured ?? parsed;
+
+      // Extract slippage from rules
+      if (typeof rules.defaultSlippageBps === "number") {
+        result.slippageBps = rules.defaultSlippageBps;
+      }
+      // Extract strategy description
+      if (typeof rules.naturalLanguageRules === "string" && rules.naturalLanguageRules) {
+        result.strategy = rules.naturalLanguageRules;
+      } else if (typeof rules.preset === "string") {
+        result.strategy = `preset: ${rules.preset}`;
+      }
     } catch {
-      return {};
+      // Fallback: try setup_agent get_status for boolean flags
+      try {
+        const resp = await this.mcp.callTool("setup_agent", { action: "get_status" });
+        const text = resp.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
+        let parsed: Record<string, unknown>;
+        try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { parsed = {}; }
+        const structured = parsed.structured as Record<string, unknown> | undefined;
+        if (structured?.slippageConfigured) result.slippageBps = result.slippageBps ?? undefined;
+        if (structured?.strategyConfigured) result.strategy = result.strategy ?? "configured";
+      } catch {
+        // Silent
+      }
     }
+
+    return result;
   }
 
   /** Update slippage on the server via MCP. */
