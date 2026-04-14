@@ -90,7 +90,7 @@ function MessageLine({ msg }: { msg: ChatMessage }): React.ReactElement {
 
 interface ChatPanelProps {
   messages: ChatMessage[];
-  onSend: (text: string) => void;
+  onSend: (text: string) => void | Promise<void>;
   inputActive: boolean;
   inputPlaceholder?: string;
 }

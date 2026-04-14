@@ -29,7 +29,7 @@ const INITIAL_STATUS: StatusData = {
 
 // ── Settings definitions ─────────────────────────────────────────────────────
 
-type AppMode = "chat" | "settings-select" | "settings-edit" | "help";
+type AppMode = "chat" | "settings-select" | "settings-edit";
 
 interface SettingItem {
   key: string;
@@ -147,6 +147,8 @@ export function App({ config }: AppProps): React.ReactElement {
   useInput((input, key) => {
     // Don't intercept when trade confirmation is active
     if (tradeConfirm) return;
+    // Ignore backspace/delete — let TextInput handle them
+    if (key.backspace || key.delete) return;
 
     const mode = appModeRef.current;
 
@@ -179,25 +181,6 @@ export function App({ config }: AppProps): React.ReactElement {
       return;
     }
 
-    // ctrl+h — help
-    if (input === "h" && key.ctrl) {
-      if (mode === "help") {
-        setAppMode("chat");
-      } else {
-        setAppMode("help");
-        addSystemMsg(
-          "Shortcuts:\n" +
-          "  ctrl+s   Settings\n" +
-          "  ctrl+l   Clear chat\n" +
-          "  ctrl+h   Help\n" +
-          "  ctrl+n   New agent\n" +
-          "  ctrl+q   Quit\n" +
-          "  esc      Back to chat",
-        );
-      }
-      return;
-    }
-
     // ctrl+n — new agent
     if (input === "n" && key.ctrl) {
       addSystemMsg("Creating new agent...");
@@ -207,11 +190,10 @@ export function App({ config }: AppProps): React.ReactElement {
       return;
     }
 
-    // ctrl+q — quit
+    // ctrl+q — quit (with cleanup)
     if (input === "q" && key.ctrl) {
       addSystemMsg("Shutting down...");
-      void bridgeRef.current?.stop();
-      exit();
+      void bridgeRef.current?.stop().finally(() => exit());
       return;
     }
   });
@@ -383,7 +365,7 @@ export function App({ config }: AppProps): React.ReactElement {
       ? "Type 1-5 to edit, esc to close..."
       : appMode === "settings-edit"
         ? `Enter new value (esc to cancel)...`
-        : "Send a message... (ctrl+h for help)";
+        : "Send a message...";
 
   // ── Render ──────────────────────────────────────────────────────────────
 
@@ -409,9 +391,7 @@ export function App({ config }: AppProps): React.ReactElement {
         {appMode !== "chat" && (
           <>
             <Text dimColor> | </Text>
-            <Text color="yellow" bold>
-              {appMode === "help" ? "HELP" : "SETTINGS"}
-            </Text>
+            <Text color="yellow" bold>SETTINGS</Text>
           </>
         )}
       </Box>
@@ -457,9 +437,6 @@ export function App({ config }: AppProps): React.ReactElement {
         </Text>
         <Text>
           <Text color="cyan" bold>^L</Text><Text dimColor> Clear </Text>
-        </Text>
-        <Text>
-          <Text color="cyan" bold>^H</Text><Text dimColor> Help </Text>
         </Text>
         <Text>
           <Text color="cyan" bold>^N</Text><Text dimColor> New </Text>

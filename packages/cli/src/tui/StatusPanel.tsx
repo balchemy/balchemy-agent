@@ -116,11 +116,11 @@ export function StatusPanel({ status }: StatusPanelProps): React.ReactElement {
         <Text dimColor>{formatUptime(status.uptime)} uptime</Text>
       </Box>
 
-      {/* Help */}
+      {/* Shortcuts */}
       <Box flexDirection="column" marginTop={1}>
-        <Text color="cyan" bold>Commands</Text>
-        <Text dimColor>/settings /clear</Text>
-        <Text dimColor>/stop /help</Text>
+        <Text color="cyan" bold>Shortcuts</Text>
+        <Text dimColor>^S settings ^L clear</Text>
+        <Text dimColor>^Q quit    ^N new</Text>
       </Box>
     </Box>
   );
