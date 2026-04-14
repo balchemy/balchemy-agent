@@ -31,6 +31,7 @@ export interface StoredAgent {
   llmModel?: string;
   llmBaseUrl?: string;
   maxDailyLlmCost?: number;
+  llmTimeoutMs?: number;
   strategy: string;
   shadowMode: boolean;
   wallets?: { solana?: string; base?: string };

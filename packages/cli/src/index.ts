@@ -177,6 +177,7 @@ async function main(): Promise<void> {
             llmModel: cached.llmModel,
             llmBaseUrl: cached.llmBaseUrl,
             maxDailyLlmCost: cached.maxDailyLlmCost,
+            llmTimeoutMs: cached.llmTimeoutMs,
             publicId: cached.publicId,
             strategy: cached.strategy,
             shadowMode: cached.shadowMode,

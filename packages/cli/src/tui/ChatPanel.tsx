@@ -1,6 +1,6 @@
-// src/tui/ChatPanel.tsx — Modernized design with left-border message styling
-import React, { useState, useCallback } from "react";
-import { Box, Text } from "ink";
+// src/tui/ChatPanel.tsx — Left-border messages + PgUp/PgDn scroll
+import React, { useState, useCallback, useEffect } from "react";
+import { Box, Text, useInput } from "ink";
 import { TextInput } from "@inkjs/ui";
 import type { ChatMessage } from "./types.js";
 
@@ -11,7 +11,7 @@ function formatTime(ts: number): string {
   });
 }
 
-// ── Message components — left-border style (OpenCode-inspired) ───────────────
+// ── Message components — left-border style ───────────────────────────────────
 
 function AgentMsg({ msg }: { msg: ChatMessage }): React.ReactElement {
   return (
@@ -94,6 +94,9 @@ function MessageLine({ msg }: { msg: ChatMessage }): React.ReactElement {
 
 // ── ChatPanel ────────────────────────────────────────────────────────────────
 
+const PAGE_SIZE = 30;
+const SCROLL_STEP = 5;
+
 interface ChatPanelProps {
   messages: ChatMessage[];
   onSend: (text: string) => void | Promise<void>;
@@ -107,18 +110,58 @@ export function ChatPanel({
   inputActive,
   inputPlaceholder,
 }: ChatPanelProps): React.ReactElement {
-  const visibleMessages = messages.slice(-50);
   const [inputKey, setInputKey] = useState(0);
+  const [scrollOffset, setScrollOffset] = useState(0);
+
+  // Auto-scroll to bottom on new messages (only if already at bottom)
+  const prevCount = React.useRef(messages.length);
+  useEffect(() => {
+    if (messages.length > prevCount.current && scrollOffset === 0) {
+      // Already at bottom — stay there (no-op)
+    } else if (messages.length > prevCount.current && scrollOffset > 0) {
+      // New message arrived while scrolled up — keep position stable
+      setScrollOffset((prev) => prev + (messages.length - prevCount.current));
+    }
+    prevCount.current = messages.length;
+  }, [messages.length, scrollOffset]);
+
+  // PgUp / PgDn scroll
+  useInput((_input, key) => {
+    if (key.pageUp) {
+      setScrollOffset((prev) => Math.min(prev + SCROLL_STEP, Math.max(0, messages.length - PAGE_SIZE)));
+      return;
+    }
+    if (key.pageDown) {
+      setScrollOffset((prev) => Math.max(0, prev - SCROLL_STEP));
+      return;
+    }
+  });
+
+  // Calculate visible window
+  const total = messages.length;
+  const end = total - scrollOffset;
+  const start = Math.max(0, end - PAGE_SIZE);
+  const visibleMessages = messages.slice(start, Math.max(end, 0));
+  const hasOlder = start > 0;
+  const isAtBottom = scrollOffset === 0;
 
   const handleSubmit = useCallback(async (value: string) => {
     if (value.trim()) {
       setInputKey((k) => k + 1);
+      setScrollOffset(0); // Jump to bottom on send
       await onSend(value.trim());
     }
   }, [onSend]);
 
   return (
     <Box flexDirection="column" flexGrow={1}>
+      {/* Scroll-up indicator */}
+      {hasOlder && (
+        <Box paddingX={1}>
+          <Text dimColor>{"\u2191"} {start} older messages — PgUp to scroll</Text>
+        </Box>
+      )}
+
       {/* Message history */}
       <Box flexDirection="column" flexGrow={1} overflowY="hidden" paddingX={1}>
         {visibleMessages.length === 0 && (
@@ -130,6 +173,13 @@ export function ChatPanel({
           <MessageLine key={msg.id} msg={msg} />
         ))}
       </Box>
+
+      {/* Scroll-down indicator */}
+      {!isAtBottom && (
+        <Box paddingX={1}>
+          <Text dimColor>{"\u2193"} {scrollOffset} newer messages — PgDn to scroll</Text>
+        </Box>
+      )}
 
       {/* Input area */}
       <Box paddingX={1} paddingY={0}>
