@@ -1,7 +1,7 @@
 // src/tui/App.tsx
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Box, Text, useApp, useInput } from "ink";
-import { TextInput } from "@inkjs/ui";
+import { Select, TextInput } from "@inkjs/ui";
 import { ChatPanel } from "./ChatPanel.js";
 import { StatusPanel } from "./StatusPanel.js";
 import { AgentBridge } from "./AgentBridge.js";
@@ -29,20 +29,22 @@ const INITIAL_STATUS: StatusData = {
 
 // ── Settings definitions ─────────────────────────────────────────────────────
 
-type AppMode = "chat" | "settings-select" | "settings-edit";
+type AppMode = "chat" | "settings-select" | "settings-edit-select" | "settings-edit-text";
 
 interface SettingItem {
   key: string;
   label: string;
   source: "local" | "remote";
+  type: "select" | "text";
+  options?: string[];
 }
 
 const SETTINGS_ITEMS: SettingItem[] = [
-  { key: "provider", label: "LLM Provider", source: "local" },
-  { key: "model", label: "LLM Model", source: "local" },
-  { key: "maxDailyCost", label: "Max Daily $", source: "local" },
-  { key: "slippage", label: "Slippage (bps)", source: "remote" },
-  { key: "strategy", label: "Strategy", source: "remote" },
+  { key: "provider", label: "LLM Provider", source: "local", type: "select", options: ["anthropic", "openai", "gemini", "grok", "openrouter"] },
+  { key: "model", label: "LLM Model", source: "local", type: "text" },
+  { key: "maxDailyCost", label: "Max Daily $", source: "local", type: "text" },
+  { key: "slippage", label: "Slippage (bps)", source: "remote", type: "text" },
+  { key: "strategy", label: "Strategy", source: "remote", type: "text" },
 ];
 
 // ── App ──────────────────────────────────────────────────────────────────────
@@ -61,16 +63,15 @@ export function App({ config }: AppProps): React.ReactElement {
   const [inputActive, setInputActive] = useState(false);
   const bridgeRef = useRef<AgentBridge | null>(null);
 
-  // App mode
+  // Settings state
   const [appMode, setAppMode] = useState<AppMode>("chat");
   const appModeRef = useRef<AppMode>("chat");
   const [settingsEditIndex, setSettingsEditIndex] = useState(-1);
   const [settingsValues, setSettingsValues] = useState<Record<string, string>>({});
-  const settingsValuesRef = useRef<Record<string, string>>({});
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsInputKey, setSettingsInputKey] = useState(0);
 
-  // Keep refs in sync with state (avoids stale closures)
   useEffect(() => { appModeRef.current = appMode; }, [appMode]);
-  useEffect(() => { settingsValuesRef.current = settingsValues; }, [settingsValues]);
 
   // Trade confirmation state
   const [tradeConfirm, setTradeConfirm] = useState<{
@@ -142,31 +143,17 @@ export function App({ config }: AppProps): React.ReactElement {
     };
   }, [config, addMessage, confirmTrade]);
 
-  // ── Keyboard shortcuts (OpenCode-style) ─────────────────────────────────
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────
 
   useInput((input, key) => {
-    // Don't intercept when trade confirmation is active
     if (tradeConfirm) return;
-    // Ignore backspace/delete — let TextInput handle them
     if (key.backspace || key.delete) return;
 
     const mode = appModeRef.current;
 
-    // Escape — always go back to chat
+    // Escape — back to chat from any mode
     if (key.escape) {
       if (mode !== "chat") {
-        setAppMode("chat");
-        setSettingsEditIndex(-1);
-        addSystemMsg("Back to chat.");
-      }
-      return;
-    }
-
-    // ctrl+s — toggle settings
-    if (input === "s" && key.ctrl) {
-      if (mode === "chat") {
-        void openSettings();
-      } else {
         setAppMode("chat");
         setSettingsEditIndex(-1);
         addSystemMsg("Settings closed.");
@@ -174,14 +161,18 @@ export function App({ config }: AppProps): React.ReactElement {
       return;
     }
 
-    // ctrl+l — clear chat
+    // Only handle shortcuts in chat mode — let Select/TextInput handle keys in settings
+    if (mode !== "chat") return;
+
+    if (input === "s" && key.ctrl) {
+      void openSettings();
+      return;
+    }
     if (input === "l" && key.ctrl) {
       setMessages([]);
       addSystemMsg("Chat cleared.");
       return;
     }
-
-    // ctrl+n — new agent
     if (input === "n" && key.ctrl) {
       addSystemMsg("Creating new agent...");
       clearAgent();
@@ -189,8 +180,6 @@ export function App({ config }: AppProps): React.ReactElement {
       exit();
       return;
     }
-
-    // ctrl+q — quit (with cleanup)
     if (input === "q" && key.ctrl) {
       addSystemMsg("Shutting down...");
       void bridgeRef.current?.stop().finally(() => exit());
@@ -204,71 +193,64 @@ export function App({ config }: AppProps): React.ReactElement {
     const bridge = bridgeRef.current;
     if (!bridge) return;
 
+    setSettingsLoading(true);
+    setAppMode("settings-select");
+
+    // Start with local values
     const local = bridge.getLocalConfig();
     const values: Record<string, string> = {
       provider: local.provider,
       model: local.model,
       maxDailyCost: `$${local.maxDailyCost.toFixed(2)}`,
-      slippage: "loading...",
-      strategy: "loading...",
+      slippage: "...",
+      strategy: "...",
     };
-    setSettingsValues({ ...values });
-    setAppMode("settings-select");
-    addSystemMsg(formatSettingsDisplay(values));
 
-    // Fetch remote settings async
+    // Fetch remote
     const remote = await bridge.fetchRemoteSettings();
-    const updated = {
-      ...values,
-      slippage: remote.slippageBps !== undefined ? `${remote.slippageBps}` : "not set",
-      strategy: remote.strategy ?? "not configured",
-    };
-    setSettingsValues(updated);
-    addSystemMsg(formatSettingsDisplay(updated));
-  }, [addSystemMsg]);
+    values.slippage = remote.slippageBps !== undefined ? `${remote.slippageBps}` : "not set";
+    values.strategy = remote.strategy ?? "not configured";
 
-  const handleSettingsInput = useCallback((text: string) => {
-    const mode = appModeRef.current;
-    const vals = settingsValuesRef.current;
+    setSettingsValues(values);
+    setSettingsLoading(false);
+  }, []);
 
-    if (mode === "settings-select") {
-      if (text === "" || text.toLowerCase() === "back") {
-        setAppMode("chat");
-        setSettingsEditIndex(-1);
-        addSystemMsg("Settings closed.");
-        return;
-      }
-      const idx = parseInt(text, 10);
-      if (isNaN(idx) || idx < 1 || idx > SETTINGS_ITEMS.length) {
-        addSystemMsg(`Type 1-${SETTINGS_ITEMS.length} to edit, esc to close.`);
-        return;
-      }
-      const item = SETTINGS_ITEMS[idx - 1];
-      const current = vals[item.key] ?? "?";
-      setSettingsEditIndex(idx - 1);
-      setAppMode("settings-edit");
-      addSystemMsg(`Editing ${item.label} (current: ${current})`);
+  // Settings item selected (from Select component)
+  const handleSettingSelected = useCallback((value: string) => {
+    const idx = parseInt(value, 10);
+    const item = SETTINGS_ITEMS[idx];
+    if (!item) return;
+
+    setSettingsEditIndex(idx);
+    if (item.type === "select") {
+      setAppMode("settings-edit-select");
+    } else {
+      setSettingsInputKey((k) => k + 1);
+      setAppMode("settings-edit-text");
+    }
+  }, []);
+
+  // Provider/select value chosen
+  const handleSelectValue = useCallback((value: string) => {
+    void saveSettingValue(settingsEditIndex, value);
+  }, [settingsEditIndex]);
+
+  // Text value submitted
+  const handleTextValue = useCallback((value: string) => {
+    if (!value.trim()) {
+      setAppMode("settings-select");
+      setSettingsEditIndex(-1);
       return;
     }
-
-    if (mode === "settings-edit") {
-      if (text === "" || text.toLowerCase() === "back") {
-        setAppMode("settings-select");
-        setSettingsEditIndex(-1);
-        addSystemMsg(formatSettingsDisplay(vals));
-        return;
-      }
-      void saveSettingValue(settingsEditIndex, text);
-      return;
-    }
-  }, [addSystemMsg, settingsEditIndex]);
+    void saveSettingValue(settingsEditIndex, value.trim());
+  }, [settingsEditIndex]);
 
   const saveSettingValue = useCallback(async (index: number, value: string) => {
     const item = SETTINGS_ITEMS[index];
     if (!item) return;
 
     const bridge = bridgeRef.current;
-    const vals = { ...settingsValuesRef.current };
+    const vals = { ...settingsValues };
 
     if (item.source === "local") {
       const agent = loadAgent();
@@ -280,16 +262,10 @@ export function App({ config }: AppProps): React.ReactElement {
       }
 
       switch (item.key) {
-        case "provider": {
-          const valid = ["anthropic", "openai", "gemini", "grok", "openrouter"];
-          if (!valid.includes(value.toLowerCase())) {
-            addErrorMsg(`Invalid provider. Choose: ${valid.join(", ")}`);
-            return;
-          }
-          agent.llmProvider = value.toLowerCase();
-          vals.provider = value.toLowerCase();
+        case "provider":
+          agent.llmProvider = value;
+          vals.provider = value;
           break;
-        }
         case "model":
           agent.llmModel = value;
           vals.model = value;
@@ -306,7 +282,7 @@ export function App({ config }: AppProps): React.ReactElement {
         }
       }
       saveAgent(agent);
-      addSystemMsg(`${item.label} \u2192 ${value}. Takes effect on restart.`);
+      addSystemMsg(`${item.label} \u2192 ${value}. Restart to apply.`);
     } else if (item.source === "remote" && bridge) {
       if (item.key === "slippage") {
         const bps = parseInt(value, 10);
@@ -332,42 +308,39 @@ export function App({ config }: AppProps): React.ReactElement {
       }
     }
 
-    // Immutable state update
     setSettingsValues(vals);
     setAppMode("settings-select");
     setSettingsEditIndex(-1);
-    addSystemMsg(formatSettingsDisplay(vals));
-  }, [addSystemMsg, addErrorMsg]);
+  }, [settingsValues, addSystemMsg, addErrorMsg]);
 
   // ── Chat input handler ──────────────────────────────────────────────────
 
   const handleSend = useCallback(async (text: string) => {
-    const mode = appModeRef.current;
-
-    // Settings mode input routing
-    if (mode === "settings-select" || mode === "settings-edit") {
-      handleSettingsInput(text);
-      return;
-    }
-
-    // Regular chat message
     if (bridgeRef.current) {
       await bridgeRef.current.sendUserMessage(text);
     } else {
       addSystemMsg("Agent not ready yet.");
     }
-  }, [handleSettingsInput, addSystemMsg]);
+  }, [addSystemMsg]);
 
-  // ── Input placeholder ───────────────────────────────────────────────────
+  // ── Settings panel options ──────────────────────────────────────────────
 
-  const inputPlaceholder =
-    appMode === "settings-select"
-      ? "Type 1-5 to edit, esc to close..."
-      : appMode === "settings-edit"
-        ? `Enter new value (esc to cancel)...`
-        : "Send a message...";
+  const settingsOptions = SETTINGS_ITEMS.map((item, i) => {
+    const val = settingsValues[item.key] ?? "...";
+    const display = val.length > 30 ? val.slice(0, 27) + "..." : val;
+    return { label: `${item.label.padEnd(16)} ${display}`, value: String(i) };
+  });
+
+  const editItem = settingsEditIndex >= 0 ? SETTINGS_ITEMS[settingsEditIndex] : null;
+  const editSelectOptions = editItem?.options?.map((o) => ({
+    label: o === settingsValues[editItem.key] ? `${o}  \u2713` : o,
+    value: o,
+  })) ?? [];
 
   // ── Render ──────────────────────────────────────────────────────────────
+
+  const inSettings = appMode !== "chat";
+  const chatInputActive = inputActive && !tradeConfirm && !inSettings;
 
   return (
     <Box flexDirection="column" height="100%">
@@ -388,7 +361,7 @@ export function App({ config }: AppProps): React.ReactElement {
         <Text color={status.sseConnected ? "green" : "yellow"}>
           {status.sseConnected ? "LIVE" : "CONNECTING"}
         </Text>
-        {appMode !== "chat" && (
+        {inSettings && (
           <>
             <Text dimColor> | </Text>
             <Text color="yellow" bold>SETTINGS</Text>
@@ -401,11 +374,46 @@ export function App({ config }: AppProps): React.ReactElement {
         <ChatPanel
           messages={messages}
           onSend={handleSend}
-          inputActive={inputActive && !tradeConfirm}
-          inputPlaceholder={inputPlaceholder}
+          inputActive={chatInputActive}
+          inputPlaceholder="Send a message..."
         />
         <StatusPanel status={status} />
       </Box>
+
+      {/* Settings panel — replaces input area when active */}
+      {appMode === "settings-select" && (
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} flexDirection="column">
+          <Box marginBottom={0}>
+            <Text color="yellow" bold>Settings</Text>
+            {settingsLoading && <Text dimColor> loading...</Text>}
+          </Box>
+          <Select options={settingsOptions} onChange={handleSettingSelected} />
+          <Text dimColor>{"\u2191\u2193"} navigate {"\u00b7"} enter select {"\u00b7"} esc close</Text>
+        </Box>
+      )}
+
+      {appMode === "settings-edit-select" && editItem && (
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} flexDirection="column">
+          <Text color="yellow" bold>{editItem.label}</Text>
+          <Select options={editSelectOptions} onChange={handleSelectValue} />
+          <Text dimColor>{"\u2191\u2193"} navigate {"\u00b7"} enter select {"\u00b7"} esc back</Text>
+        </Box>
+      )}
+
+      {appMode === "settings-edit-text" && editItem && (
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} flexDirection="column">
+          <Text color="yellow" bold>{editItem.label}</Text>
+          <Text dimColor>Current: {settingsValues[editItem.key] ?? "?"}</Text>
+          <Box>
+            <Text color="yellow">{"\u276f"} </Text>
+            <TextInput
+              key={settingsInputKey}
+              placeholder="Enter new value..."
+              onSubmit={handleTextValue}
+            />
+          </Box>
+        </Box>
+      )}
 
       {/* Trade confirmation overlay */}
       {tradeConfirm && (
@@ -432,40 +440,12 @@ export function App({ config }: AppProps): React.ReactElement {
         paddingX={1}
         gap={2}
       >
-        <Text>
-          <Text color="cyan" bold>^S</Text><Text dimColor> Settings </Text>
-        </Text>
-        <Text>
-          <Text color="cyan" bold>^L</Text><Text dimColor> Clear </Text>
-        </Text>
-        <Text>
-          <Text color="cyan" bold>^N</Text><Text dimColor> New </Text>
-        </Text>
-        <Text>
-          <Text color="cyan" bold>^Q</Text><Text dimColor> Quit </Text>
-        </Text>
-        <Text>
-          <Text color="cyan" bold>ESC</Text><Text dimColor> Back </Text>
-        </Text>
+        <Text><Text color="cyan" bold>^S</Text><Text dimColor> Settings </Text></Text>
+        <Text><Text color="cyan" bold>^L</Text><Text dimColor> Clear </Text></Text>
+        <Text><Text color="cyan" bold>^N</Text><Text dimColor> New </Text></Text>
+        <Text><Text color="cyan" bold>^Q</Text><Text dimColor> Quit </Text></Text>
+        <Text><Text color="cyan" bold>ESC</Text><Text dimColor> Back </Text></Text>
       </Box>
     </Box>
   );
-}
-
-// ── Helpers ────────────────────────────────────────────────────────────────────
-
-function formatSettingsDisplay(values: Record<string, string>): string {
-  const lines = SETTINGS_ITEMS.map((item, i) => {
-    const val = values[item.key] ?? "?";
-    const display = val.length > 40 ? val.slice(0, 37) + "..." : val;
-    return `  ${i + 1}  ${item.label.padEnd(16)} ${display}`;
-  });
-
-  return [
-    "Settings",
-    "\u2500".repeat(38),
-    ...lines,
-    "",
-    "Type number to edit \u00b7 esc to close",
-  ].join("\n");
 }
