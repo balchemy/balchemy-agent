@@ -1,6 +1,6 @@
 {
   "name": "@balchemyai/agent-sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "MIT",
   "private": false,
   "description": "Balchemy external AI agent onboarding + MCP SDK — ERC-8004 onboarding, Solana/EVM trading, 100 tools via MCP",

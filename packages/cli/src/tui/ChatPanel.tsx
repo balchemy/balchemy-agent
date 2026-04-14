@@ -4,37 +4,103 @@ import { Box, Text } from "ink";
 import { TextInput } from "@inkjs/ui";
 import type { ChatMessage } from "./types.js";
 
-const MESSAGE_STYLE: Record<string, { label: string; color: string; labelColor: string }> = {
-  agent: { label: "AI", color: "cyan", labelColor: "cyanBright" },
-  user: { label: "YOU", color: "white", labelColor: "whiteBright" },
-  system: { label: "SYS", color: "gray", labelColor: "gray" },
-  trade: { label: "TXN", color: "green", labelColor: "greenBright" },
-  error: { label: "ERR", color: "red", labelColor: "redBright" },
-};
-
-function MessageLine({ msg }: { msg: ChatMessage }): React.ReactElement {
-  const style = MESSAGE_STYLE[msg.type] ?? { label: "---", color: "white", labelColor: "white" };
-  const time = new Date(msg.timestamp).toLocaleTimeString("en-GB", {
+function formatTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString("en-GB", {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
 
+// ── Message components per type ──────────────────────────────────────────────
+
+function AgentMsg({ msg }: { msg: ChatMessage }): React.ReactElement {
   return (
-    <Box marginBottom={msg.type === "agent" ? 1 : 0}>
-      <Text dimColor>{time} </Text>
-      <Text color={style.labelColor} bold>{style.label.padEnd(3)} </Text>
-      <Text color={style.color} wrap="wrap">{msg.text}</Text>
+    <Box flexDirection="column" marginBottom={1}>
+      <Box>
+        <Text color="cyanBright" bold>AI </Text>
+        <Text dimColor>{formatTime(msg.timestamp)}</Text>
+      </Box>
+      <Box borderStyle="round" borderColor="cyan" paddingX={1}>
+        <Text color="white" wrap="wrap">{msg.text}</Text>
+      </Box>
     </Box>
   );
 }
+
+function UserMsg({ msg }: { msg: ChatMessage }): React.ReactElement {
+  return (
+    <Box marginBottom={0}>
+      <Text dimColor>{formatTime(msg.timestamp)} </Text>
+      <Text color="whiteBright" bold>{">"} </Text>
+      <Text color="white" wrap="wrap">{msg.text}</Text>
+    </Box>
+  );
+}
+
+function SystemMsg({ msg }: { msg: ChatMessage }): React.ReactElement {
+  return (
+    <Box marginBottom={0}>
+      <Text dimColor italic>{formatTime(msg.timestamp)} {"\u00b7"} {msg.text}</Text>
+    </Box>
+  );
+}
+
+function TradeMsg({ msg }: { msg: ChatMessage }): React.ReactElement {
+  const isBuy = msg.action === "buy";
+  const color = isBuy ? "green" : "red";
+  const labelColor = isBuy ? "greenBright" : "redBright";
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Box>
+        <Text color={labelColor} bold>{isBuy ? "BUY" : "SELL"} </Text>
+        <Text dimColor>{formatTime(msg.timestamp)}</Text>
+      </Box>
+      <Box borderStyle="round" borderColor={color} paddingX={1}>
+        <Text color={color} bold wrap="wrap">{msg.text}</Text>
+      </Box>
+    </Box>
+  );
+}
+
+function ErrorMsg({ msg }: { msg: ChatMessage }): React.ReactElement {
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Box>
+        <Text color="redBright" bold>ERR </Text>
+        <Text dimColor>{formatTime(msg.timestamp)}</Text>
+      </Box>
+      <Box borderStyle="single" borderColor="red" paddingX={1}>
+        <Text color="red" wrap="wrap">{msg.text}</Text>
+      </Box>
+    </Box>
+  );
+}
+
+function MessageLine({ msg }: { msg: ChatMessage }): React.ReactElement {
+  switch (msg.type) {
+    case "agent": return <AgentMsg msg={msg} />;
+    case "user": return <UserMsg msg={msg} />;
+    case "trade": return <TradeMsg msg={msg} />;
+    case "error": return <ErrorMsg msg={msg} />;
+    default: return <SystemMsg msg={msg} />;
+  }
+}
+
+// ── ChatPanel ────────────────────────────────────────────────────────────────
 
 interface ChatPanelProps {
   messages: ChatMessage[];
   onSend: (text: string) => void;
   inputActive: boolean;
+  inputPlaceholder?: string;
 }
 
-export function ChatPanel({ messages, onSend, inputActive }: ChatPanelProps): React.ReactElement {
+export function ChatPanel({
+  messages,
+  onSend,
+  inputActive,
+  inputPlaceholder,
+}: ChatPanelProps): React.ReactElement {
   const visibleMessages = messages.slice(-100);
   const [inputKey, setInputKey] = useState(0);
 
@@ -60,12 +126,20 @@ export function ChatPanel({ messages, onSend, inputActive }: ChatPanelProps): Re
       </Box>
 
       {/* Input */}
-      <Box paddingX={1} borderStyle="single" borderColor="cyan" borderTop borderBottom={false} borderLeft={false} borderRight={false}>
+      <Box
+        paddingX={1}
+        borderStyle="single"
+        borderColor="cyan"
+        borderTop
+        borderBottom={false}
+        borderLeft={false}
+        borderRight={false}
+      >
         <Text color="cyan" bold>{">"} </Text>
         {inputActive ? (
           <TextInput
             key={inputKey}
-            placeholder="Send a message..."
+            placeholder={inputPlaceholder ?? "Send a message..."}
             onSubmit={handleSubmit}
           />
         ) : (

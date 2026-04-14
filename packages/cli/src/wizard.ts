@@ -500,7 +500,7 @@ export async function runWizard(outDir: string): Promise<void> {
   process.stdout.write(renderLogo(20));
   process.stdout.write(WELCOME_TEXT);
 
-  const TOTAL_STEPS = 8;
+  const TOTAL_STEPS = 9;
 
   try {
     // ── Step 1: LLM Provider ──────────────────────────────────────────────
@@ -687,7 +687,7 @@ export async function runWizard(outDir: string): Promise<void> {
       printInfo(`\n\x1b[1;33mFund your Solana wallet (${solAddr}) with at least 0.05 SOL to start trading.\x1b[0m\n`);
 
       // Step C: Configure slippage
-      printStep(7, 8, "Slippage");
+      printStep(7, TOTAL_STEPS, "Slippage");
       printInfo("Default: 200bps (2%). Memecoin trading usually needs 300-500bps (3-5%).");
       const slippageInput = await askNumber(rl, "Slippage in basis points", 300);
       const slipSpinner = spin("Configuring slippage...");
@@ -697,8 +697,16 @@ export async function runWizard(outDir: string): Promise<void> {
       });
       slipSpinner.succeed(`Slippage: ${slippageInput}bps (${(slippageInput / 100).toFixed(1)}%)`);
 
-      // Step D: Trading strategy (natural language)
-      printStep(8, 8, "Trading Strategy");
+      // Step D: Per-trade hard limits
+      printStep(8, TOTAL_STEPS, "Trade Limits");
+      printInfo("Set a hard limit per trade. Your LLM cannot exceed this, no matter what.");
+      printInfo("This protects you if the LLM hallucinates or makes an unexpected decision.\n");
+      const maxTradeSol = await askNumber(rl, "Max SOL per trade", 0.05);
+      const maxTradeUsd = await askNumber(rl, "Max USD per trade", 10);
+      printSuccess(`Hard limits: ${maxTradeSol} SOL / $${maxTradeUsd} per trade`);
+
+      // Step E: Trading strategy (natural language)
+      printStep(9, TOTAL_STEPS, "Trading Strategy");
       printInfo("Describe your strategy in natural language. Your LLM will execute it.");
       printInfo('Example: "PumpFun\'dan yeni tokenleri tara, hacmi 10K+ olanlari al,');
       printInfo(' max 0.01 SOL per trade, 2x\'de yarisini sat, max 1 pozisyon"\n');
@@ -714,6 +722,8 @@ export async function runWizard(outDir: string): Promise<void> {
         preset: "memecoin_sniper",
         shadowMode: false,
         naturalLanguageRules: strategyRules,
+        maxTradeSol,
+        maxTradeUsd,
       });
       stratSpinner.succeed("Strategy configured (LIVE mode)");
     } else {

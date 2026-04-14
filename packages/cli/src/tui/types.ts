@@ -51,6 +51,8 @@ export interface StatusData {
   uptime: number;
   sseConnected: boolean;
   status: string;
+  provider?: string;
+  model?: string;
 }
 
 export interface TuiConfig {

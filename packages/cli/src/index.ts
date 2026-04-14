@@ -34,7 +34,37 @@ function ask(rl: readline.Interface, question: string, defaultVal = ""): Promise
   });
 }
 
+async function checkForUpdate(): Promise<void> {
+  try {
+    const res = await fetch("https://registry.npmjs.org/balchemy/latest", {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { version?: string };
+    const latest = data.version;
+    if (!latest) return;
+
+    // Read current version from package.json (bundled at build time)
+    const { createRequire } = await import("module");
+    const require = createRequire(import.meta.url);
+    const pkg = require("../package.json") as { version: string };
+    const current = pkg.version;
+
+    if (latest !== current) {
+      process.stdout.write(
+        `\n  ${G}Update available${R} ${D}${current}${R} → ${T}${latest}${R}\n` +
+        `  Run ${W}npm install -g balchemy${R} to update\n\n`,
+      );
+    }
+  } catch {
+    // Silent — don't block startup
+  }
+}
+
 async function main(): Promise<void> {
+  // Non-blocking update check
+  void checkForUpdate();
+
   switch (cmd) {
     case "--init":
     case "init": {

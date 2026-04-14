@@ -1,6 +1,6 @@
 {
   "name": "balchemy",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "license": "MIT",
   "type": "module",
   "description": "Autonomous AI trading agent for Solana and Base chains",
@@ -36,7 +36,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@balchemyai/agent-sdk": "^0.1.0",
+    "@balchemyai/agent-sdk": "^0.1.1",
     "@inkjs/ui": "^2.0.0",
     "dotenv": "^16.0.0",
     "ink": "^6.0.0",

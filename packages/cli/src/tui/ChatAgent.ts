@@ -97,11 +97,15 @@ export class ChatAgent {
   /**
    * Send a user message, let the LLM respond and call tools as needed.
    * Returns the final text response.
-   * onToolCall is fired each time the LLM calls a tool (for UI display).
+   *
+   * @param onToolCall Fired each time the LLM calls a tool (for UI display).
+   * @param confirmTrade When set, trade_command calls show a preview and wait
+   *   for user confirmation. Return true to proceed, false to cancel.
    */
   async chat(
     userMessage: string,
     onToolCall?: (name: string, result: string) => void,
+    confirmTrade?: (preview: string, args: Record<string, unknown>) => Promise<boolean>,
   ): Promise<string> {
     this.history.push({ role: "user", content: userMessage });
 
@@ -133,6 +137,23 @@ export class ChatAgent {
         }
 
         let resultText: string;
+
+        // Intercept trade_command for confirmation
+        if (tc.function.name === "trade_command" && confirmTrade) {
+          const intent = String(args.intent ?? args.message ?? "trade");
+          const token = String(args.token ?? "").slice(0, 12);
+          const amount = String(args.amount ?? "?");
+          const preview = `${intent.toUpperCase()} ${amount} SOL → ${token || "unknown"}`;
+
+          const confirmed = await confirmTrade(preview, args);
+          if (!confirmed) {
+            resultText = "Trade cancelled by user.";
+            onToolCall?.(tc.function.name, resultText);
+            this.history.push({ role: "tool", content: resultText, tool_call_id: tc.id });
+            continue;
+          }
+        }
+
         try {
           const toolResp = await this.mcp.callTool(tc.function.name, args);
           const content = toolResp.content ?? [];
@@ -206,7 +227,7 @@ export class ChatAgent {
 
       if (!res.ok) {
         const errText = await res.text();
-        throw new Error(`LLM API ${res.status}: ${errText.slice(0, 200)}`);
+        throw new Error(`LLM API ${res.status}: ${errText.replace(/\{[\s\S]*\}/g, "").trim().slice(0, 120) || errText.slice(0, 120)}`);
       }
 
       const data = await res.json() as {
@@ -326,7 +347,7 @@ export class ChatAgent {
 
       if (!res.ok) {
         const errText = await res.text();
-        throw new Error(`Anthropic API ${res.status}: ${errText.slice(0, 200)}`);
+        throw new Error(`Anthropic API ${res.status}: ${errText.replace(/\{[\s\S]*\}/g, "").trim().slice(0, 120) || errText.slice(0, 120)}`);
       }
 
       const data = await res.json() as {

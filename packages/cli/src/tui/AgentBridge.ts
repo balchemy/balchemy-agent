@@ -5,9 +5,43 @@ import type { AgentLoopConfig, BalchemyMcpClient } from "@balchemyai/agent-sdk";
 import type { ChatMessage, StatusData, TradeInfo, TuiConfig } from "./types.js";
 import { ChatAgent } from "./ChatAgent.js";
 
+/** Truncate verbose API errors (429 JSON blobs, stack traces) to a readable one-liner. */
+function truncateError(raw: string): string {
+  // Extract HTTP status code if present
+  const statusMatch = raw.match(/\b(4\d{2}|5\d{2})\b/);
+  const status = statusMatch ? statusMatch[1] : null;
+
+  // Extract retry-after header value if present
+  const retryMatch = raw.match(/retry[- ]?after[:\s]*(\d+)/i);
+  const retryAfter = retryMatch ? `${retryMatch[1]}s` : null;
+
+  // Strip JSON blobs — everything between first { and last }
+  let clean = raw.replace(/\{[\s\S]*\}/g, "").trim();
+
+  // If stripping JSON left us with almost nothing, take first line of original
+  if (clean.length < 10) {
+    clean = raw.split("\n")[0];
+  }
+
+  // Truncate to max 150 chars
+  if (clean.length > 150) {
+    clean = clean.slice(0, 147) + "...";
+  }
+
+  // Build a readable summary
+  if (status === "429") {
+    return retryAfter
+      ? `Rate limited (429). Retry after ${retryAfter}.`
+      : "Rate limited (429). Try again in a moment.";
+  }
+
+  return clean;
+}
+
 type StateSetters = {
   addMessage: (msg: ChatMessage) => void;
   setStatus: (updater: (prev: StatusData) => StatusData) => void;
+  confirmTrade: (preview: string) => Promise<boolean>;
 };
 
 export class AgentBridge {
@@ -71,7 +105,7 @@ export class AgentBridge {
       llmTimeoutMs: this.config.llmTimeoutMs ?? 15_000,
       mcpFetchFn: this.replayFetch,
 
-      onEvent: (event: { data: unknown; type: string }) => {
+      onEvent: (event) => {
         const data = event.data as Record<string, unknown> | undefined;
         const eventType = data?.subscription_type ?? data?.event_type ?? event.type;
         // Only show subscription events in chat, skip heartbeats/internal
@@ -87,13 +121,13 @@ export class AgentBridge {
         this.setters.setStatus((prev) => ({ ...prev, eventsReceived: prev.eventsReceived + 1 }));
       },
 
-      onDecision: (decision: { action: string; token?: string; amount?: string; reasoning?: string }) => {
+      onDecision: (decision) => {
         const reasoning = decision.reasoning ?? `${decision.action} ${decision.token ?? ""} ${decision.amount ?? ""}`;
         this.addAgentMessage(reasoning);
         this.setters.setStatus((prev) => ({ ...prev, decisionsExecuted: prev.decisionsExecuted + 1 }));
       },
 
-      onTradeResult: (result: { action: string; token?: string; amount?: string; response: string }) => {
+      onTradeResult: (result) => {
         const trade: TradeInfo = {
           token: result.token ?? "unknown",
           action: result.action as "buy" | "sell",
@@ -110,11 +144,11 @@ export class AgentBridge {
         }));
       },
 
-      onError: (err: Error) => {
+      onError: (err) => {
         this.addErrorMessage(err.message);
       },
 
-      onStatusChange: (status: { status: string; llmCostToday: number; sseConnected: boolean; uptime: number }) => {
+      onStatusChange: (status) => {
         this.setters.setStatus((prev) => ({
           ...prev,
           status: status.status,
@@ -127,6 +161,13 @@ export class AgentBridge {
 
     this.loop = new AgentLoop(loopConfig);
     await this.loop.start();
+
+    // Push provider/model to status panel
+    this.setters.setStatus((prev) => ({
+      ...prev,
+      provider: this.config.llmProvider,
+      model: this.config.llmModel,
+    }));
 
     // Input is ready now — kick off greeting + balance check in the background
     void this.greet(setupComplete);
@@ -150,10 +191,7 @@ export class AgentBridge {
       );
       this.addAgentMessage(reply);
     } catch (err: unknown) {
-      const raw = err instanceof Error ? err.message : String(err);
-      // Truncate long API errors — show first line only
-      const short = raw.split("\n")[0].slice(0, 120);
-      this.addErrorMessage(`LLM error: ${short}`);
+      this.addErrorMessage(`LLM error: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -173,6 +211,7 @@ export class AgentBridge {
       const reply = await this.chatAgent.chat(
         text,
         (name, _result) => this.addSystemMessage(`Tool: ${name}`),
+        (preview) => this.setters.confirmTrade(preview),
       );
       this.addAgentMessage(reply);
     } catch (err: unknown) {
@@ -230,7 +269,60 @@ export class AgentBridge {
     }
   }
 
-  // Convenience helpers
+  // ── Settings helpers (for /settings menu) ─────────────────────────────────
+
+  /** Fetch server-side settings (slippage, strategy) from MCP. */
+  async fetchRemoteSettings(): Promise<{ slippageBps?: number; strategy?: string }> {
+    try {
+      const resp = await this.mcp.callTool("setup_agent", { action: "get_status" });
+      const text = resp.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
+      let parsed: Record<string, unknown>;
+      try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { parsed = {}; }
+      const structured = parsed.structured as Record<string, unknown> | undefined;
+      return {
+        slippageBps: typeof structured?.slippageBps === "number" ? structured.slippageBps : undefined,
+        strategy: typeof structured?.naturalLanguageRules === "string" ? structured.naturalLanguageRules : undefined,
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  /** Update slippage on the server via MCP. */
+  async updateSlippage(bps: number): Promise<boolean> {
+    try {
+      await this.mcp.callTool("setup_agent", { action: "configure_slippage", slippageBps: bps });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Update strategy on the server via MCP. */
+  async updateStrategy(rules: string): Promise<boolean> {
+    try {
+      await this.mcp.callTool("setup_agent", {
+        action: "configure_autonomous",
+        naturalLanguageRules: rules,
+        shadowMode: false,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Get current local config for settings display. */
+  getLocalConfig(): { provider: string; model: string; maxDailyCost: number } {
+    return {
+      provider: this.config.llmProvider,
+      model: this.config.llmModel ?? "(default)",
+      maxDailyCost: this.config.maxDailyLlmCost ?? 5,
+    };
+  }
+
+  // ── Convenience helpers ──────────────────────────────────────────────────
+
   private addAgentMessage(text: string): void {
     this.setters.addMessage({ id: randomUUID(), type: "agent", text, timestamp: Date.now() });
   }
@@ -238,11 +330,10 @@ export class AgentBridge {
     this.setters.addMessage({ id: randomUUID(), type: "system", text, timestamp: Date.now() });
   }
   private addTradeMessage(trade: TradeInfo): void {
-    const icon = trade.action === "buy" ? "BUY" : "SELL";
     this.setters.addMessage({
       id: randomUUID(),
       type: "trade",
-      text: `${icon} ${trade.amount} SOL ${trade.action === "buy" ? "->" : "<-"} ${trade.token.slice(0, 8)}...`,
+      text: `${trade.amount} SOL ${trade.action === "buy" ? "\u2192" : "\u2190"} ${trade.token.slice(0, 8)}...`,
       token: trade.token,
       action: trade.action,
       amount: trade.amount,
@@ -250,6 +341,8 @@ export class AgentBridge {
     });
   }
   private addErrorMessage(text: string): void {
-    this.setters.addMessage({ id: randomUUID(), type: "error", text, timestamp: Date.now() });
+    // Truncate long error messages — extract status code and first meaningful line
+    const truncated = truncateError(text);
+    this.setters.addMessage({ id: randomUUID(), type: "error", text: truncated, timestamp: Date.now() });
   }
 }
