@@ -1,19 +1,18 @@
-// src/tui/StatusPanel.tsx
+// src/tui/StatusPanel.tsx — Modernized with cleaner sections
 import React from "react";
 import { Box, Text } from "ink";
 import type { StatusData } from "./types.js";
 
-function Section({ title, children }: { title: string; children: React.ReactNode }): React.ReactElement {
+function Divider(): React.ReactElement {
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Text bold color="cyan">{title}</Text>
-      {children}
+    <Box marginY={0}>
+      <Text dimColor>{"\u2500".repeat(24)}</Text>
     </Box>
   );
 }
 
 function truncate(s: string, len: number): string {
-  return s.length > len ? s.slice(0, len - 2) + ".." : s;
+  return s.length > len ? s.slice(0, len - 1) + "\u2026" : s;
 }
 
 function formatUptime(ms: number): string {
@@ -30,95 +29,83 @@ interface StatusPanelProps {
 }
 
 export function StatusPanel({ status }: StatusPanelProps): React.ReactElement {
-  const statusColor =
-    status.status === "running" ? "green" :
-    status.status === "starting" ? "yellow" : "red";
-
   return (
     <Box
       flexDirection="column"
       width={28}
-      borderStyle="single"
+      borderStyle="round"
       borderColor="gray"
       paddingX={1}
     >
-      {/* Connection + Agent Status */}
-      <Box flexDirection="column" marginBottom={1}>
+      {/* Connection */}
+      <Box flexDirection="column">
         <Box>
           <Text color={status.sseConnected ? "green" : "yellow"} bold>
             {status.sseConnected ? "\u25cf" : "\u25cb"}{" "}
           </Text>
-          <Text color={status.sseConnected ? "green" : "yellow"}>
+          <Text color={status.sseConnected ? "green" : "yellow"} bold>
             {status.sseConnected ? "Connected" : "Connecting"}
           </Text>
         </Box>
-        <Box>
-          <Text color={statusColor} bold>
-            {status.status === "running" ? "\u25b6" : "\u25a0"}{" "}
-          </Text>
-          <Text color={statusColor}>{status.status}</Text>
-        </Box>
+        <Text dimColor>  {status.status}</Text>
       </Box>
 
-      {/* LLM Info */}
+      <Divider />
+
+      {/* LLM */}
       {status.provider && (
-        <Section title="LLM">
-          <Text dimColor>{status.provider}</Text>
-          <Text dimColor>{truncate(status.model ?? "default", 22)}</Text>
-        </Section>
+        <>
+          <Box flexDirection="column">
+            <Text dimColor>{status.provider}/{truncate(status.model ?? "default", 16)}</Text>
+          </Box>
+          <Divider />
+        </>
       )}
 
       {/* Balance */}
-      <Section title="Balance">
+      <Box flexDirection="column">
         <Text color="green" bold>{status.balanceSol.toFixed(4)} SOL</Text>
         <Text dimColor>~${status.balanceUsd.toFixed(2)}</Text>
-      </Section>
+      </Box>
+
+      <Divider />
 
       {/* Wallets */}
-      <Section title="Wallets">
+      <Box flexDirection="column">
         {status.wallets.map((w) => (
           <Text key={w.chain} dimColor>
-            {w.chain === "solana" ? "SOL" : "EVM"} {truncate(w.address, 16)}
+            {w.chain === "solana" ? "\u25c6" : "\u25c7"} {truncate(w.address, 18)}
           </Text>
         ))}
-        {status.wallets.length === 0 && <Text dimColor>-</Text>}
-      </Section>
+        {status.wallets.length === 0 && <Text dimColor>No wallets</Text>}
+      </Box>
 
-      {/* Active Trades */}
-      <Section title="Trades">
-        {status.activeTrades.length === 0 && <Text dimColor>-</Text>}
+      <Divider />
+
+      {/* Trades */}
+      <Box flexDirection="column">
+        {status.activeTrades.length === 0 && <Text dimColor>No trades</Text>}
         {status.activeTrades.slice(0, 3).map((t, i) => (
           <Text key={`${t.token}-${i}`} color={t.action === "buy" ? "green" : "red"}>
-            {t.action === "buy" ? "+" : "-"} {truncate(t.token, 10)} {t.amount}
+            {t.action === "buy" ? "\u25b2" : "\u25bc"} {truncate(t.token, 10)} {t.amount}
           </Text>
         ))}
         {status.activeTrades.length > 3 && (
           <Text dimColor>+{status.activeTrades.length - 3} more</Text>
         )}
-      </Section>
+      </Box>
 
-      {/* Recent Tools */}
-      {status.recentTools.length > 0 && (
-        <Section title="Tools">
-          {status.recentTools.slice(-3).map((t, i) => (
-            <Text key={`tool-${i}`} dimColor>
-              {t.success ? "\u2713" : "\u2717"} {truncate(t.name, 14)} {t.durationMs}ms
-            </Text>
-          ))}
-        </Section>
-      )}
+      <Divider />
 
       {/* Stats */}
-      <Box flexDirection="column" marginTop={1}>
-        <Text dimColor>{status.eventsReceived} events</Text>
-        <Text dimColor>{status.tradesExecuted} trades</Text>
-        <Text dimColor>${status.llmCostToday.toFixed(4)} / ${status.maxDailyLlmCost}</Text>
+      <Box flexDirection="column">
+        <Text dimColor>{status.eventsReceived} events {"\u00b7"} {status.tradesExecuted} trades</Text>
+        <Text dimColor>${status.llmCostToday.toFixed(3)} / ${status.maxDailyLlmCost}</Text>
         <Text dimColor>{formatUptime(status.uptime)} uptime</Text>
       </Box>
 
       {/* Shortcuts */}
       <Box flexDirection="column" marginTop={1}>
-        <Text color="cyan" bold>Shortcuts</Text>
         <Text dimColor>^S settings ^L clear</Text>
         <Text dimColor>^Q quit    ^N new</Text>
       </Box>

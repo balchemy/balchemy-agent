@@ -151,11 +151,14 @@ export function App({ config }: AppProps): React.ReactElement {
 
     const mode = appModeRef.current;
 
-    // Escape — back to chat from any mode
+    // Escape — step back: edit→select→chat
     if (key.escape) {
-      if (mode !== "chat") {
-        setAppMode("chat");
+      if (mode === "settings-edit-select" || mode === "settings-edit-text" || mode === "settings-edit-apikey") {
+        setAppMode("settings-select");
         setSettingsEditIndex(-1);
+        setPendingProvider(null);
+      } else if (mode === "settings-select") {
+        setAppMode("chat");
         addSystemMsg("Settings closed.");
       }
       return;
@@ -176,13 +179,13 @@ export function App({ config }: AppProps): React.ReactElement {
     if (input === "n" && key.ctrl) {
       addSystemMsg("Creating new agent...");
       clearAgent();
-      void bridgeRef.current?.stop();
-      exit();
+      void bridgeRef.current?.stop().finally(() => exit());
       return;
     }
     if (input === "q" && key.ctrl) {
       addSystemMsg("Shutting down...");
-      void bridgeRef.current?.stop().finally(() => exit());
+      const timer = setTimeout(() => exit(), 3000); // Timeout fallback
+      void bridgeRef.current?.stop().finally(() => { clearTimeout(timer); exit(); });
       return;
     }
   });
@@ -236,10 +239,19 @@ export function App({ config }: AppProps): React.ReactElement {
   const handleSelectValue = useCallback((value: string) => {
     const item = SETTINGS_ITEMS[settingsEditIndex];
     if (item?.key === "provider") {
-      // Save provider, then ask for API key
+      // Save provider + base URL, then ask for API key
       const agent = loadAgent();
       if (agent) {
         agent.llmProvider = value;
+        // Set correct base URL for the provider
+        const BASE_URLS: Record<string, string | undefined> = {
+          openai: undefined, // default
+          anthropic: undefined, // handled by Anthropic SDK
+          gemini: "https://generativelanguage.googleapis.com/v1beta/openai",
+          grok: "https://api.x.ai/v1",
+          openrouter: "https://openrouter.ai/api/v1",
+        };
+        agent.llmBaseUrl = BASE_URLS[value];
         saveAgent(agent);
       }
       const vals = { ...settingsValues, provider: value };
@@ -382,28 +394,23 @@ export function App({ config }: AppProps): React.ReactElement {
   return (
     <Box flexDirection="column" height="100%">
       {/* Header */}
-      <Box
-        borderStyle="single"
-        borderColor="cyan"
-        borderBottom
-        borderTop={false}
-        borderLeft={false}
-        borderRight={false}
-        paddingX={1}
-      >
-        <Text color="cyan" bold>BALCHEMY</Text>
-        <Text dimColor> | </Text>
-        <Text dimColor>{config.publicId}</Text>
-        <Text dimColor> | </Text>
-        <Text color={status.sseConnected ? "green" : "yellow"}>
-          {status.sseConnected ? "LIVE" : "CONNECTING"}
+      <Box paddingX={1} paddingY={0}>
+        <Text color="cyan" bold>{"\u25c8"} BALCHEMY</Text>
+        <Text dimColor> {"\u2502"} </Text>
+        <Text dimColor>{config.publicId.slice(0, 16)}</Text>
+        <Text dimColor> {"\u2502"} </Text>
+        <Text color={status.sseConnected ? "green" : "yellow"} bold>
+          {status.sseConnected ? "\u25cf LIVE" : "\u25cb CONNECTING"}
         </Text>
         {inSettings && (
           <>
-            <Text dimColor> | </Text>
-            <Text color="yellow" bold>SETTINGS</Text>
+            <Text dimColor> {"\u2502"} </Text>
+            <Text color="yellow" bold>{"\u2699"} SETTINGS</Text>
           </>
         )}
+      </Box>
+      <Box>
+        <Text dimColor>{"\u2500".repeat(80)}</Text>
       </Box>
 
       {/* Main content */}
@@ -482,21 +489,15 @@ export function App({ config }: AppProps): React.ReactElement {
       )}
 
       {/* Bottom shortcut bar */}
-      <Box
-        borderStyle="single"
-        borderColor="gray"
-        borderTop
-        borderBottom={false}
-        borderLeft={false}
-        borderRight={false}
-        paddingX={1}
-        gap={2}
-      >
-        <Text><Text color="cyan" bold>^S</Text><Text dimColor> Settings </Text></Text>
-        <Text><Text color="cyan" bold>^L</Text><Text dimColor> Clear </Text></Text>
-        <Text><Text color="cyan" bold>^N</Text><Text dimColor> New </Text></Text>
-        <Text><Text color="cyan" bold>^Q</Text><Text dimColor> Quit </Text></Text>
-        <Text><Text color="cyan" bold>ESC</Text><Text dimColor> Back </Text></Text>
+      <Box paddingX={1} gap={1}>
+        <Text dimColor>{"\u2500".repeat(80)}</Text>
+      </Box>
+      <Box paddingX={1} gap={2}>
+        <Text><Text color="cyan" bold>^S</Text><Text dimColor> Settings</Text></Text>
+        <Text><Text color="cyan" bold>^L</Text><Text dimColor> Clear</Text></Text>
+        <Text><Text color="cyan" bold>^N</Text><Text dimColor> New</Text></Text>
+        <Text><Text color="cyan" bold>^Q</Text><Text dimColor> Quit</Text></Text>
+        {inSettings && <Text><Text color="yellow" bold>ESC</Text><Text dimColor> Back</Text></Text>}
       </Box>
     </Box>
   );
