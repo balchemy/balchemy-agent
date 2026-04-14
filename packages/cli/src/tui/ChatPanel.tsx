@@ -162,8 +162,8 @@ export function ChatPanel({
         </Box>
       )}
 
-      {/* Message history */}
-      <Box flexDirection="column" flexGrow={1} overflowY="hidden" paddingX={1}>
+      {/* Message history — justify end so messages stack from bottom */}
+      <Box flexDirection="column" flexGrow={1} overflowY="hidden" paddingX={1} justifyContent="flex-end">
         {visibleMessages.length === 0 && (
           <Box marginTop={1}>
             <Text dimColor>  Waiting for agent...</Text>

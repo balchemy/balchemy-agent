@@ -53,6 +53,7 @@ export class AgentBridge {
   private readonly setters: StateSetters;
   private readonly replayFetch: typeof fetch;
   private lowBalanceWarned = false;
+  private pendingLoopConfig: AgentLoopConfig | null = null;
 
   constructor(config: TuiConfig, setters: StateSetters) {
     this.config = config;
@@ -160,8 +161,10 @@ export class AgentBridge {
       },
     };
 
-    // Only start AgentLoop if setup is complete — incomplete agents should not
-    // receive events or make autonomous decisions until wallets + trading are configured.
+    // Store loop config — may start later after setup completes in-session
+    this.pendingLoopConfig = loopConfig;
+
+    // Only start AgentLoop if setup is complete
     if (setupComplete) {
       this.loop = new AgentLoop(loopConfig);
       await this.loop.start();
@@ -233,8 +236,24 @@ export class AgentBridge {
         (preview) => this.setters.confirmTrade(preview),
       );
       this.addAgentMessage(reply);
+
+      // After each message, check if setup just completed — start loop if so
+      await this.tryStartLoop();
     } catch (err: unknown) {
       this.addErrorMessage(`LLM error: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /** Start AgentLoop if setup just completed during this session. */
+  private async tryStartLoop(): Promise<void> {
+    if (this.loop || !this.pendingLoopConfig) return;
+    const nowComplete = await this.checkSetupStatus();
+    if (nowComplete) {
+      this.loop = new AgentLoop(this.pendingLoopConfig);
+      await this.loop.start();
+      this.addSystemMessage("Agent loop started — now listening for events.");
+      this.setters.setStatus((prev) => ({ ...prev, sseConnected: true, status: "running" }));
+      void this.checkBalance();
     }
   }
 
@@ -261,7 +280,22 @@ export class AgentBridge {
       try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { parsed = {}; }
       const sol = Number(parsed.totalValueSol ?? 0);
       const usd = Number(parsed.totalValueUsd ?? 0);
-      this.setters.setStatus((prev) => ({ ...prev, balanceSol: sol, balanceUsd: usd }));
+      // Extract wallet addresses if present
+      const wallets: Array<{ chain: "solana" | "base"; address: string }> = [];
+      const walletsArr = parsed.wallets as Array<Record<string, unknown>> | undefined;
+      if (Array.isArray(walletsArr)) {
+        for (const w of walletsArr) {
+          if (w.chain && w.address) {
+            wallets.push({ chain: w.chain as "solana" | "base", address: String(w.address) });
+          }
+        }
+      }
+      this.setters.setStatus((prev) => ({
+        ...prev,
+        balanceSol: sol,
+        balanceUsd: usd,
+        ...(wallets.length > 0 ? { wallets } : {}),
+      }));
     } catch {
       // Silent — don't spam chat
     }
