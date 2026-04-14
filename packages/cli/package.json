@@ -1,6 +1,6 @@
 {
   "name": "balchemy",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "license": "MIT",
   "type": "module",
   "description": "Autonomous AI trading agent for Solana and Base chains",

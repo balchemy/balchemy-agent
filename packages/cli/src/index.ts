@@ -34,17 +34,16 @@ function ask(rl: readline.Interface, question: string, defaultVal = ""): Promise
   });
 }
 
-async function checkForUpdate(): Promise<void> {
+async function checkForUpdate(): Promise<boolean> {
   try {
     const res = await fetch("https://registry.npmjs.org/balchemy/latest", {
       signal: AbortSignal.timeout(3000),
     });
-    if (!res.ok) return;
+    if (!res.ok) return false;
     const data = (await res.json()) as { version?: string };
     const latest = data.version;
-    if (!latest) return;
+    if (!latest) return false;
 
-    // Read current version from package.json (bundled at build time)
     const { createRequire } = await import("module");
     const require = createRequire(import.meta.url);
     const pkg = require("../package.json") as { version: string };
@@ -52,18 +51,40 @@ async function checkForUpdate(): Promise<void> {
 
     if (latest !== current) {
       process.stdout.write(
-        `\n  ${G}Update available${R} ${D}${current}${R} → ${T}${latest}${R}\n` +
-        `  Run ${W}npm install -g balchemy${R} to update\n\n`,
+        `\n  ${G}Update available${R} ${D}${current}${R} → ${T}${latest}${R}\n`,
       );
+
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const answer = await ask(rl, `${W}Update now?${R} (Y/n)`, "y");
+      rl.close();
+
+      if (answer.toLowerCase() === "y" || answer.toLowerCase() === "yes") {
+        process.stdout.write(`  Updating to ${T}${latest}${R}...\n`);
+        const { execSync } = await import("child_process");
+        try {
+          execSync(`npm install -g balchemy@${latest}`, { stdio: "inherit" });
+          process.stdout.write(`\n  ${T}Updated!${R} Restarting...\n\n`);
+          // Re-exec with the new version
+          const { execFileSync } = await import("child_process");
+          execFileSync("balchemy", process.argv.slice(2), { stdio: "inherit" });
+          process.exit(0);
+        } catch {
+          process.stdout.write(`  ${D}Update failed. Continuing with ${current}.${R}\n\n`);
+        }
+      } else {
+        process.stdout.write(`  ${D}Skipped.${R}\n\n`);
+      }
+      return true;
     }
+    return false;
   } catch {
-    // Silent — don't block startup
+    return false;
   }
 }
 
 async function main(): Promise<void> {
-  // Non-blocking update check
-  void checkForUpdate();
+  // Check for updates — if updated, the process re-execs and exits
+  await checkForUpdate();
 
   switch (cmd) {
     case "--init":
