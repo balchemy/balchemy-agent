@@ -288,7 +288,25 @@ export function App({ config }: AppProps): React.ReactElement {
     if (agent) {
       agent.llmApiKey = value.trim();
       saveAgent(agent);
-      addSystemMsg(`API key saved for ${pendingProvider}. Restart to apply.`);
+      addSystemMsg(`API key saved for ${pendingProvider}. Reconnecting...`);
+      const updated = loadAgent();
+      const bridge = bridgeRef.current;
+      if (updated && bridge) {
+        void bridge.restart({
+          mcpEndpoint: updated.mcpEndpoint,
+          apiKey: updated.apiKey,
+          llmProvider: updated.llmProvider,
+          llmApiKey: updated.llmApiKey,
+          llmModel: updated.llmModel,
+          llmBaseUrl: updated.llmBaseUrl,
+          maxDailyLlmCost: updated.maxDailyLlmCost,
+          llmTimeoutMs: updated.llmTimeoutMs,
+          publicId: updated.publicId,
+          strategy: updated.strategy,
+          shadowMode: updated.shadowMode,
+        }).then(() => addSystemMsg("Reconnected with new provider."))
+          .catch(() => addErrorMsg("Reconnect failed. Restart CLI manually."));
+      }
     }
     setPendingProvider(null);
     setAppMode("settings-select");
@@ -332,7 +350,25 @@ export function App({ config }: AppProps): React.ReactElement {
         }
       }
       saveAgent(agent);
-      addSystemMsg(`${item.label} \u2192 ${value}. Restart to apply.`);
+      addSystemMsg(`${item.label} \u2192 ${value}. Reconnecting...`);
+      // Hot-reload: restart bridge with new config from disk
+      const updated = loadAgent();
+      if (updated && bridge) {
+        void bridge.restart({
+          mcpEndpoint: updated.mcpEndpoint,
+          apiKey: updated.apiKey,
+          llmProvider: updated.llmProvider,
+          llmApiKey: updated.llmApiKey,
+          llmModel: updated.llmModel,
+          llmBaseUrl: updated.llmBaseUrl,
+          maxDailyLlmCost: updated.maxDailyLlmCost,
+          llmTimeoutMs: updated.llmTimeoutMs,
+          publicId: updated.publicId,
+          strategy: updated.strategy,
+          shadowMode: updated.shadowMode,
+        }).then(() => addSystemMsg("Reconnected with new settings."))
+          .catch(() => addErrorMsg("Reconnect failed. Restart CLI manually."));
+      }
     } else if (item.source === "remote" && bridge) {
       if (item.key === "slippage") {
         const bps = parseInt(value, 10);

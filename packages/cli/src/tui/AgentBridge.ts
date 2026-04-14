@@ -47,8 +47,8 @@ type StateSetters = {
 
 export class AgentBridge {
   private loop: AgentLoop | null = null;
-  private readonly mcp: BalchemyMcpClient;
-  private readonly config: TuiConfig;
+  private mcp: BalchemyMcpClient;
+  private config: TuiConfig;
   private chatAgent: ChatAgent | null = null;
   private readonly setters: StateSetters;
   private readonly replayFetch: typeof fetch;
@@ -160,8 +160,12 @@ export class AgentBridge {
       },
     };
 
-    this.loop = new AgentLoop(loopConfig);
-    await this.loop.start();
+    // Only start AgentLoop if setup is complete — incomplete agents should not
+    // receive events or make autonomous decisions until wallets + trading are configured.
+    if (setupComplete) {
+      this.loop = new AgentLoop(loopConfig);
+      await this.loop.start();
+    }
 
     // Push provider/model to status panel
     this.setters.setStatus((prev) => ({
@@ -198,6 +202,20 @@ export class AgentBridge {
 
   async stop(): Promise<void> {
     await this.loop?.stop();
+    this.loop = null;
+    this.chatAgent = null;
+  }
+
+  /** Restart with new config — used when settings change (no CLI restart needed). */
+  async restart(newConfig: TuiConfig): Promise<void> {
+    await this.stop();
+    this.config = newConfig;
+    this.mcp = connectMcp({
+      endpoint: newConfig.mcpEndpoint,
+      apiKey: newConfig.apiKey,
+      fetchFn: this.replayFetch,
+    });
+    await this.start();
   }
 
   async sendUserMessage(text: string): Promise<void> {
@@ -313,28 +331,40 @@ export class AgentBridge {
     return result;
   }
 
-  /** Update slippage on the server via MCP. */
+  /** Update slippage on the server via MCP. Returns false if backend rejected (e.g. STEP_ORDER). */
   async updateSlippage(bps: number): Promise<boolean> {
     try {
-      await this.mcp.callTool("setup_agent", { action: "configure_slippage", slippageBps: bps });
-      return true;
+      const resp = await this.mcp.callTool("setup_agent", { action: "configure_slippage", slippageBps: bps });
+      return !this.isToolError(resp);
     } catch {
       return false;
     }
   }
 
-  /** Update strategy on the server via MCP. */
+  /** Update strategy on the server via MCP. Returns false if backend rejected. */
   async updateStrategy(rules: string): Promise<boolean> {
     try {
-      await this.mcp.callTool("setup_agent", {
+      const resp = await this.mcp.callTool("setup_agent", {
         action: "configure_autonomous",
         naturalLanguageRules: rules,
         shadowMode: false,
       });
-      return true;
+      return !this.isToolError(resp);
     } catch {
       return false;
     }
+  }
+
+  /** Check if MCP tool response contains a backend error (ToolError returned as success). */
+  private isToolError(resp: { content?: Array<{ type: string; text?: string }> }): boolean {
+    const text = resp.content?.find((c) => c.type === "text")?.text ?? "";
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      if (parsed.ok === false) return true;
+      const structured = parsed.structured as Record<string, unknown> | undefined;
+      if (structured?.error) return true;
+    } catch { /* not JSON */ }
+    return false;
   }
 
   /** Get current local config for settings display. Reads from disk to catch recent saves. */

@@ -7,12 +7,14 @@ import type { TuiConfig } from "./types.js";
 export async function startTui(config: TuiConfig): Promise<void> {
   const { waitUntilExit } = render(<App config={config} />);
 
-  // Handle SIGINT/SIGTERM gracefully
-  const shutdown = (): void => {
-    process.exit(0);
+  // Force process exit after cleanup — prevents hanging on SSE/gRPC connections
+  const forceExit = (): void => {
+    setTimeout(() => process.exit(0), 500).unref();
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", forceExit);
+  process.on("SIGTERM", forceExit);
 
   await waitUntilExit();
+  // Ensure clean exit even if Ink doesn't trigger process.exit
+  process.exit(0);
 }
