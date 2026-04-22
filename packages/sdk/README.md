@@ -106,9 +106,9 @@ const swap = await mcp.evmSwap({
 
 ## Tool Exposure and Scope
 
-By default the MCP endpoint exposes **7 tools**: `ask_bot`, `trade_command`, `agent_execute`, `agent_research`, `agent_portfolio`, `agent_status`, `agent_config`.
+By default the MCP endpoint exposes a curated agent-facing tool set for chat, execution, setup, behavior rules, portfolio/status, and subscriptions.
 
-The full catalog of **106 tools** is available when the platform flag `MCP_EXPOSE_GRANULAR_TOOLS=true` is enabled on the bot. Contact the Balchemy team to enable granular tool access for your integration.
+The broader internal catalog is only exposed when the platform flag `MCP_EXPOSE_GRANULAR_TOOLS=true` is enabled on the bot. Contact the Balchemy team if your integration needs granular tool access beyond the default agent-facing surface.
 
 Tool scopes:
 
@@ -191,9 +191,9 @@ import { SseEventStream } from "@balchemyai/agent-sdk";
 import type { SseEvent } from "@balchemyai/agent-sdk";
 
 const stream = new SseEventStream(
-  "https://api.balchemy.ai/api/events",
+  `${response.mcp.endpoint}/events/sse`,
   response.mcp.apiKey ?? "",
-  { reconnectDelayMs: 2000, maxReconnects: 5 }
+  { reconnectDelayMs: 2000, maxReconnects: 0 }
 );
 
 // Async iterator
