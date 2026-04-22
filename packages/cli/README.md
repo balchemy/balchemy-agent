@@ -100,11 +100,13 @@ Plus 90+ internal tools for research, risk scoring, and execution — your LLM p
 
 | Provider | Environment Variable | Notes |
 |-----------|---------------------|-------|
-| Anthropic | `ANTHROPIC_API_KEY` | Claude 3.5 Sonnet, Opus, etc. |
-| OpenAI | `OPENAI_API_KEY` | GPT-4o, GPT-5, etc. |
-| Google Gemini | `GEMINI_API_KEY` | Gemini 1.5 Pro, Flash |
+| Anthropic | `ANTHROPIC_API_KEY` | Haiku 4.5, Sonnet 4.6, Opus 4.6+ |
+| OpenAI | `OPENAI_API_KEY` | GPT-4o, GPT-5.4, etc. |
+| Google Gemini | `GEMINI_API_KEY` | Gemini 3.1 Pro, Flash |
+| Google Vertex AI | `GOOGLE_APPLICATION_CREDENTIALS` | Gemini 3.1 Pro via Vertex AI |
 | xAI Grok | `GROK_API_KEY` | Grok-4-1-fast for research |
 | OpenRouter | `OPENROUTER_API_KEY` | Access to 100+ models |
+| Google Vertex AI | `GOOGLE_APPLICATION_CREDENTIALS` | Gemini 3.1 Pro via Vertex AI |
 
 ## Configuration
 
