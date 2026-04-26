@@ -176,7 +176,7 @@ async function main(): Promise<void> {
         ]);
         printSummaryBlock("Available actions", [
           { label: "y", value: "Resume this saved session" },
-          { label: "n", value: "Keep the cache and open setup again" },
+          { label: "n", value: "Open the chat setup for this saved agent" },
           { label: "new", value: "Clear saved state and start fresh" },
         ]);
         process.stdout.write("\n");
@@ -185,8 +185,9 @@ async function main(): Promise<void> {
         const choice = await ask(rl, `${W}Resume this agent?${R} (y/n/new)`, "y");
         rl.close();
 
-        if (choice === "y" || choice === "yes") {
-          // Resume — go straight to TUI
+        if (choice === "y" || choice === "yes" || choice === "n" || choice === "no") {
+          // Resume into the chat cockpit. If setup is incomplete, the chat agent
+          // guides the remaining setup instead of launching the terminal wizard.
           const { startTui } = await import("./tui/start.js");
           await startTui({
             mcpEndpoint: cached.mcpEndpoint,
@@ -203,9 +204,9 @@ async function main(): Promise<void> {
             behaviorRules: cached.behaviorRules,
             autoSeedSubscriptions: false,
           });
-        } else if (choice === "new" || choice === "n") {
-          // New agent — clear cache and run wizard
-          if (choice === "new") clearAgent();
+        } else if (choice === "new") {
+          // New agent — clear cache and run the lightweight bootstrap wizard.
+          clearAgent();
           const { runWizard } = await import("./wizard.js");
           await runWizard(process.cwd());
         }

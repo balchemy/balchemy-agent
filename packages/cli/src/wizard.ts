@@ -7,21 +7,21 @@
  *   3. API key input
  *   4. Model selection (per-provider model list)
  *   5. New agent or existing agent
- *   6. Walletless onboarding (auto) or MCP endpoint entry
- *   7. MCP setup_agent wizard (wallets, slippage, autonomous strategy)
- *   8. Write agent.config.yaml + .env
- *   9. Offer to start the agent loop
+ *   6. Write agent.config.yaml + .env
+ *   7. Open the chat cockpit; setup_agent runs inside chat
  */
 
 import * as readline from "readline";
 import * as fs from "fs";
 import * as path from "path";
 import { exec } from "child_process";
-import { loginWithOpenAI } from "./openai-oauth.js";
 import { randomUUID } from "crypto";
+import { createRequire } from "module";
 import { renderLogo } from "./terminal-logo.js";
 import { saveAgent } from "./agent-store.js";
-import { buildWizardBehaviorRules } from './behavior-rules.util.js';
+
+const require = createRequire(import.meta.url);
+const CLI_VERSION = (require("../package.json") as { version?: string }).version ?? "unknown";
 
 // ── Brand Colors ──────────────────────────────────────────────────────────────
 
@@ -31,11 +31,13 @@ const D = "\x1b[38;5;245m";         // dim
 const R = "\x1b[0m";                 // reset
 const T = "\x1b[38;2;0;172;176m";   // teal
 
-const WELCOME_TEXT = `
-  ${G}B${T}alchemy ${W}Agent${R}  ${D}v0.1.15${R}
+function welcomeText(): string {
+  return `
+  ${G}B${T}alchemy ${W}Agent${R}  ${D}v${CLI_VERSION}${R}
   ${D}Configure your model, connect your agent, and launch a clean live cockpit.${R}
   ${D}Same control surface, less noise. Everything important stays visible.${R}
 `;
+}
 
 // ── Provider Definitions ──────────────────────────────────────────────────────
 
@@ -538,9 +540,9 @@ export async function runWizard(outDir: string): Promise<void> {
   });
 
   process.stdout.write(renderLogo(20));
-  process.stdout.write(WELCOME_TEXT);
+  process.stdout.write(welcomeText());
 
-  const TOTAL_STEPS = 9;
+  const TOTAL_STEPS = 4;
 
   try {
     // ── Step 1: LLM Provider ──────────────────────────────────────────────
@@ -558,69 +560,38 @@ export async function runWizard(outDir: string): Promise<void> {
     printStep(2, TOTAL_STEPS, "Authentication");
 
     let llmApiKey = "";
-    let useOAuth = false;
-    let llmBaseUrlOverride: string | undefined;
 
-    // OpenAI is the only provider with official OAuth support for subscriptions
     if (provider.name === "openai") {
       const authChoice = await askChoice(rl, "How do you want to connect?", [
-        { label: "ChatGPT Subscription (log in with browser)" },
-        { label: "API Key (pay-per-use)" },
+        { label: "API Key (recommended, works for live tool-calling)", value: "api_key" },
+        { label: "ChatGPT Subscription OAuth (not supported for live API yet)", value: "subscription" },
       ]);
-      useOAuth = authChoice.label.includes("Subscription");
-    }
-
-    if (useOAuth) {
-      // OpenAI OAuth PKCE flow
-      printInfo("Opening browser — log in with your ChatGPT account...\n");
-      try {
-        const tokens = await loginWithOpenAI();
-        llmApiKey = tokens.accessToken;
-        // ChatGPT subscription uses the Codex API endpoint
-        llmBaseUrlOverride = "https://api.openai.com/v1";
-        printSuccess(`Logged in${tokens.accountId ? ` (${tokens.accountId})` : ""}`);
-
-        // Store refresh token for auto-refresh
-        const authCachePath = path.join(process.env.HOME ?? "~", ".balchemy", "auth.json");
-        const authDir = path.dirname(authCachePath);
-        if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
-        fs.writeFileSync(authCachePath, JSON.stringify({
-          provider: "openai",
-          accessToken: tokens.accessToken,
-          refreshToken: tokens.refreshToken,
-          expiresAt: tokens.expiresAt,
-          accountId: tokens.accountId,
-        }, null, 2), "utf8");
-        printInfo(`Credentials saved to ${authCachePath}`);
-      } catch (err: unknown) {
-        printError(`OAuth failed: ${err instanceof Error ? err.message : String(err)}`);
-        printInfo("Falling back to API key...\n");
-        useOAuth = false;
+      if ((authChoice as { value?: string }).value === "subscription") {
+        printWarning("ChatGPT Plus/Pro subscriptions do not currently work as OpenAI Platform API keys in Balchemy.");
+        printInfo("Use an OpenAI Platform API key for live tool-calling. Subscription OAuth will be re-enabled only after an approved OpenAI app/API flow is available.\n");
       }
     }
 
-    if (!useOAuth) {
-      // API key flow — open browser to key page
-      printInfo(`Opening ${provider.label} API key page...`);
-      openBrowser(provider.keyUrl);
-      printInfo(`${D}${provider.keyUrl}${R}`);
-      printInfo("Copy your API key and paste it below.\n");
+    // API key flow — open browser to key page
+    printInfo(`Opening ${provider.label} API key page...`);
+    openBrowser(provider.keyUrl);
+    printInfo(`${D}${provider.keyUrl}${R}`);
+    printInfo("Copy your API key and paste it below.\n");
 
-      llmApiKey = await askSecret(rl, "Paste your API key");
-      if (!llmApiKey) {
-        printError("API key is required.");
-        rl.close();
-        process.exit(1);
-      }
+    llmApiKey = await askSecret(rl, "Paste your API key");
+    if (!llmApiKey) {
+      printError("API key is required.");
+      rl.close();
+      process.exit(1);
+    }
 
-      // Validate
-      const keySpinner = spin("Validating API key...");
-      const keyValid = await validateApiKey(provider, llmApiKey);
-      if (keyValid) {
-        keySpinner.succeed("API key validated");
-      } else {
-        keySpinner.succeed("Could not validate (continuing anyway)");
-      }
+    // Validate
+    const keySpinner = spin("Validating API key...");
+    const keyValid = await validateApiKey(provider, llmApiKey);
+    if (keyValid) {
+      keySpinner.succeed("API key validated");
+    } else {
+      keySpinner.succeed("Could not validate (continuing anyway)");
     }
 
     // ── Step 3: Model Selection ───────────────────────────────────────────
@@ -656,13 +627,6 @@ export async function runWizard(outDir: string): Promise<void> {
     let mcpEndpoint: string;
     let apiKey: string;
     let publicId: string;
-    let masterKey: string | null = null;
-    let solAddr = "";
-    let baseAddr = "";
-    let maxTradeSol = 0.05;
-    let maxTradeUsd = 10;
-    let strategyRules = "";
-    let behaviorRules: Record<string, unknown> = {};
 
     if ((agentChoice as { value: string }).value === "new") {
       const agentName = await ask(rl, "Agent name", `agent-${Date.now().toString(36)}`);
@@ -686,109 +650,7 @@ export async function runWizard(outDir: string): Promise<void> {
         { label: "API key", value: maskValue(apiKey, 10, 4) },
       ], "success");
 
-      // ── MCP Setup (same flow as MCP onboarding docs) ──────────────────
-
-      // Step A: Bind developer wallet
-      process.stdout.write("\n");
-      printStep(5, TOTAL_STEPS, "Developer Wallet");
-      printInfo("Your EVM wallet is used for recovery, Hub access, and withdrawals.");
-      printInfo("When you connect this wallet to balchemy.ai, you'll see this bot in your Hub dashboard.\n");
-      const walletAddr = await ask(rl, "Your EVM wallet address (0x...)");
-      if (walletAddr && walletAddr.startsWith("0x") && walletAddr.length === 42) {
-        const bindSpinner = spin("Binding developer wallet...");
-        const bindResult = await callSetupTool(mcpEndpoint, apiKey, {
-          action: "bind_developer_wallet",
-          walletAddress: walletAddr,
-          walletAddressConfirm: walletAddr,
-        });
-        if (bindResult) {
-          const reply = String(bindResult.reply ?? "");
-          const masterKeyMatch = reply.match(/balc_mk_[A-Za-z0-9_-]+/);
-          bindSpinner.succeed("Developer wallet bound");
-          if (masterKeyMatch) {
-            masterKey = masterKeyMatch[0];
-            printKeyValueBlock("Recovery", [
-              { label: "Developer wallet", value: walletAddr },
-              { label: "Master key", value: masterKey },
-            ], "warning");
-            printWarning("Save this master key now. It will not be shown again.");
-            printInfo("Use it for key rotation, wallet changes, bot deletion and recovery.\n");
-          }
-        } else {
-          bindSpinner.fail("Could not bind wallet (you can do this later via chat)");
-        }
-      } else {
-        printInfo("Skipped — you can bind a wallet later via chat.");
-      }
-
-      // Step B: Create trading wallets
-      printStep(6, TOTAL_STEPS, "Trading Wallets");
-      const solSpinner = spin("Creating Solana wallet...");
-      const solResult = await callSetupTool(mcpEndpoint, apiKey, {
-        action: "create_wallet",
-        chain: "solana",
-      });
-      solAddr = extractAddress(solResult);
-      solSpinner.succeed(`Solana wallet: ${solAddr}`);
-
-      const baseSpinner = spin("Creating Base wallet...");
-      const baseResult = await callSetupTool(mcpEndpoint, apiKey, {
-        action: "create_wallet",
-        chain: "base",
-      });
-      baseAddr = extractAddress(baseResult);
-      baseSpinner.succeed(`Base wallet: ${baseAddr}`);
-
-      printKeyValueBlock("Trading wallets", [
-        { label: "Solana", value: solAddr },
-        { label: "Base", value: baseAddr },
-      ], "success");
-      printWarning(`Fund your Solana wallet (${solAddr}) with at least 0.05 SOL to start trading.\n`);
-
-      // Step C: Configure slippage
-      printStep(7, TOTAL_STEPS, "Slippage");
-      printInfo("Default: 200bps (2%). Memecoin trading usually needs 300-500bps (3-5%).");
-      const slippageInput = await askNumber(rl, "Slippage in basis points", 300);
-      const slipSpinner = spin("Configuring slippage...");
-      await callSetupTool(mcpEndpoint, apiKey, {
-        action: "configure_slippage",
-        slippageBps: slippageInput,
-      });
-      slipSpinner.succeed(`Slippage: ${slippageInput}bps (${(slippageInput / 100).toFixed(1)}%)`);
-
-      // Step D: Per-trade hard limits
-      printStep(8, TOTAL_STEPS, "Trade Limits");
-      printInfo("Set a hard limit per trade. Your LLM cannot exceed this, no matter what.");
-      printInfo("This protects you if the LLM hallucinates or makes an unexpected decision.\n");
-      maxTradeSol = await askNumber(rl, "Max SOL per trade", 0.05);
-      maxTradeUsd = await askNumber(rl, "Max USD per trade", 10);
-      printSuccess(`Hard limits: ${maxTradeSol} SOL / $${maxTradeUsd} per trade`);
-      printKeyValueBlock("Execution guardrails", [
-        { label: "Slippage", value: `${slippageInput} bps (${(slippageInput / 100).toFixed(1)}%)` },
-        { label: "Max per trade", value: `${maxTradeSol} SOL / $${maxTradeUsd}` },
-      ], "warning");
-
-      // Step E: Trading strategy (natural language)
-      printStep(9, TOTAL_STEPS, "Trading Strategy");
-      printInfo("Describe your strategy in natural language. Your LLM will execute it.");
-      printInfo('Example: "PumpFun\'dan yeni tokenleri tara, hacmi 10K+ olanlari al,');
-      printInfo(' max 0.01 SOL per trade, 2x\'de yarisini sat, max 1 pozisyon"\n');
-      strategyRules = await ask(
-        rl,
-        "Your strategy",
-        "Max 0.01 SOL per trade, stop loss 30%, take profit 100%, max 1 position",
-      );
-
-      const stratSpinner = spin("Configuring autonomous mode (LIVE)...");
-      await callSetupTool(mcpEndpoint, apiKey, {
-        action: "configure_autonomous",
-        preset: "memecoin_sniper",
-        shadowMode: false,
-        naturalLanguageRules: strategyRules,
-        maxTradeSol,
-        maxTradeUsd,
-      });
-      stratSpinner.succeed("Strategy configured (LIVE mode)");
+      printInfo("Next, the chat cockpit will guide setup: developer wallet, Solana/Base choice, trading wallets, slippage, hard limits and strategy.\n");
     } else {
       mcpEndpoint = await ask(rl, "MCP endpoint", "https://api.balchemy.ai/mcp/YOUR_PUBLIC_ID");
       apiKey = await askSecret(rl, "Balchemy API key");
@@ -823,14 +685,9 @@ export async function runWizard(outDir: string): Promise<void> {
       ], "success");
     }
 
-    const strategy = STRATEGIES[0];
+    const strategy = STRATEGIES.find((item) => item.name === "custom") ?? STRATEGIES[0];
     const shadowMode = false;
-    behaviorRules = buildWizardBehaviorRules({
-      preset: strategy.preset,
-      naturalLanguageRules: strategyRules,
-      maxTradeSol,
-      maxTradeUsd,
-    });
+    const behaviorRules: Record<string, unknown> = {};
 
     // ── Save & Launch ─────────────────────────────────────────────────────
     process.stdout.write("\n");
@@ -877,7 +734,6 @@ export async function runWizard(outDir: string): Promise<void> {
       publicId,
       mcpEndpoint,
       apiKey,
-      masterKey: masterKey ?? undefined,
       llmProvider: provider.sdkProvider,
       llmApiKey,
       llmModel: model.id,
@@ -886,7 +742,7 @@ export async function runWizard(outDir: string): Promise<void> {
       strategy: strategy.name,
       shadowMode,
       behaviorRules,
-      wallets: { solana: solAddr, base: baseAddr },
+      wallets: {},
       createdAt: new Date().toISOString(),
     });
     printSuccess("Agent cached to ~/.balchemy/agent.json");
@@ -911,13 +767,13 @@ export async function runWizard(outDir: string): Promise<void> {
         llmProvider: provider.sdkProvider,
         llmApiKey,
         llmModel: model.id,
-        llmBaseUrl: provider.name !== "openai" && provider.name !== "anthropic" ? provider.baseUrl : llmBaseUrlOverride,
+        llmBaseUrl: provider.name !== "openai" && provider.name !== "anthropic" ? provider.baseUrl : undefined,
         maxDailyLlmCost,
         behaviorRules,
         publicId,
         strategy: strategy.name,
         shadowMode,
-        autoSeedSubscriptions: true,
+        autoSeedSubscriptions: false,
       });
     }
   } finally {

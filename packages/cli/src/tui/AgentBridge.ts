@@ -216,7 +216,20 @@ export class AgentBridge {
     }
 
     if (!setupComplete) {
-      this.addAgentMessage(buildSetupRequiredMessage(setupStatus ?? {}));
+      try {
+        const reply = await this.chatAgent.chat(
+          "Start my Balchemy setup. First call setup_agent get_status, then ask me only the next required setup question.",
+          (name, _result) => {
+            if (name !== "setup_agent") {
+              this.addSystemMessage(`Tool: ${name}`);
+            }
+          },
+        );
+        this.addAgentMessage(reply || buildSetupRequiredMessage(setupStatus ?? {}));
+      } catch (err: unknown) {
+        this.addAgentMessage(buildSetupRequiredMessage(setupStatus ?? {}));
+        this.addErrorMessage(`LLM setup prompt failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
       return;
     }
 

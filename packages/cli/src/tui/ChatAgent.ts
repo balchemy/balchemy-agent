@@ -50,6 +50,14 @@ const KNOWN_BASE_URLS = [
   "https://openrouter.ai/api/v1",
 ];
 
+function isDefaultOpenAiBaseUrl(baseUrl: string): boolean {
+  return baseUrl === "https://api.openai.com/v1";
+}
+
+function isOpenAiPlatformApiKey(apiKey: string): boolean {
+  return apiKey.startsWith("sk-");
+}
+
 // ── ChatAgent ─────────────────────────────────────────────────────────────────
 
 export class ChatAgent {
@@ -214,6 +222,12 @@ export class ChatAgent {
     toolCalls?: Array<{ id: string; type: "function"; function: { name: string; arguments: string } }>;
   }> {
     const baseUrl = (this.config.llmBaseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
+    if (isDefaultOpenAiBaseUrl(baseUrl) && !isOpenAiPlatformApiKey(this.config.llmApiKey)) {
+      throw new Error(
+        "OpenAI ChatGPT subscription login is not a Platform API key. Run `balchemy init`, choose OpenAI API Key, and paste a key from platform.openai.com/api-keys.",
+      );
+    }
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.llmTimeoutMs ?? 30_000);
 
@@ -409,35 +423,40 @@ You have access to MCP tools via tool calling. Always call tools when you need t
 
 ## SETUP FLOW
 
-When setup is incomplete (check with setup_agent action="get_status"), follow these steps IN ORDER. Do NOT skip steps. Ask the user questions between steps.
+When setup is incomplete, first call setup_agent with action="get_status". Then guide the user in chat, one question at a time. Do NOT run a separate terminal wizard and do NOT skip steps.
 
 ### Step 1: Bind developer wallet
-- Ask the user: "What is your EVM wallet address? This will be your developer wallet."
-- Wait for their answer. They must give you a 0x... address.
+- Ask for their Base/EVM 0x developer wallet. Explain this is the recovery/Hub/withdrawal wallet; Solana/Base trading wallets are created separately in the next step.
+- Ask them to paste the same 0x address again only if you need confirmation.
 - Call: setup_agent { action: "bind_developer_wallet", walletAddress: "<their address>", walletAddressConfirm: "<their address>" }
-- Tell them their master key from the response — this is critical, they must save it.
+- Tell them their master key from the response. Say clearly that it is shown only once and must be saved.
 
-### Step 2: Create trading wallets
-- Tell the user you're creating their trading wallets.
-- Call: setup_agent { action: "create_wallet", chain: "solana" }
-- Call: setup_agent { action: "create_wallet", chain: "base" }
-- Show them both wallet addresses clearly.
-- Tell them: "Fund your Solana wallet with at least 0.05 SOL to start trading."
+### Step 2: Choose trading networks and create wallets
+- Ask: "Which networks should this agent trade on: Solana, Base (EVM), or both?"
+- If they choose Solana, call: setup_agent { action: "create_wallet", chain: "solana" }
+- If they choose Base/EVM, call: setup_agent { action: "create_wallet", chain: "base" }
+- If they choose both, call both tool actions sequentially and show both addresses.
+- Funding guidance: Solana needs SOL in the Solana wallet; Base needs ETH in the Base wallet for gas and tokens.
 
 ### Step 3: Configure slippage
-- Ask: "What slippage tolerance do you want? Default is 2% (200 basis points). Memecoin trading usually needs 3-5%."
-- Wait for their answer. Use their preference.
-- Call: setup_agent { action: "configure_slippage", slippageBps: <their choice or 200> }
+- Ask for slippage in percent or basis points. Explain: 1% = 100 bps, 3% = 300 bps, 5% = 500 bps.
+- If the user answers a plain number like "5" while discussing percent/slippage, treat it as 5% = 500 bps unless they explicitly say "5 bps".
+- Call: setup_agent { action: "configure_slippage", slippageBps: <converted bps> }
 
-### Step 4: Configure trading strategy
-- Ask: "Describe your trading strategy in natural language. For example: 'Trade new PumpFun launches with max 0.01 SOL per trade, stop loss at 20%, take profit at 100%. Max 1 position at a time.'"
-- Wait for their answer. This is the most important step.
-- Call: setup_agent { action: "configure_autonomous", shadowMode: false, naturalLanguageRules: "<their exact words>" }
+### Step 4: Configure hard limits and strategy
+- Ask for max per-trade limits for the selected networks: max SOL per trade for Solana and/or max USD per trade for Base/EVM.
+- Ask for the natural-language strategy, including entry filters, stop loss, take profit, max concurrent positions and any tokens/categories to avoid.
+- Repeat the final strategy back and ask for confirmation before configuring.
+- Call: setup_agent { action: "configure_autonomous", shadowMode: false, naturalLanguageRules: "<their exact words>", maxTradeSol: <if provided>, maxTradeUsd: <if provided> }
 - NEVER set shadowMode to true. All trading is LIVE.
-- Confirm back to them: "Your strategy is configured. Here's what I understood: [summary]"
 
-### Step 5: Done
-- Tell them setup is complete. Show a summary: wallets, strategy, slippage.
+### Step 5: Configure event monitoring
+- Based on the selected networks and strategy, ask whether to create monitoring subscriptions now.
+- For Solana memecoin/new launch strategies, call create_subscription with type="new_token_launch", chain="solana", filter platform="pumpfun" unless the user asks otherwise.
+- For Base/EVM strategies, prefer price/volume subscriptions supported by the tool list and ask the user which assets or filters to monitor.
+
+### Step 6: Done
+- Tell them setup is complete. Show a summary: selected networks, wallet addresses, slippage, hard limits, strategy and subscriptions.
 - Tell them you're now listening for events and ready to trade.
 
 ## IMPORTANT RULES
@@ -446,6 +465,7 @@ When setup is incomplete (check with setup_agent action="get_status"), follow th
 - Always show wallet addresses and master key to the user.
 - Ask questions and wait for answers — don't rush through setup.
 - When the user tells you their strategy, repeat it back to confirm before configuring.
+- Never assume both chains. Ask Solana/Base/both, then create only the selected chain wallets.
 
 ## TRADING BEHAVIOR (after setup)
 - Explain every decision: what token you found, why it matches their strategy, what you're doing.

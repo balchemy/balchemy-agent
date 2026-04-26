@@ -18,6 +18,12 @@ export class OpenAiAdapter implements LlmAdapter {
   }
 
   async chat(messages: LlmMessage[], maxTokens?: number): Promise<LlmResponse> {
+    if (this.baseUrl === 'https://api.openai.com/v1' && !this.apiKey.startsWith('sk-')) {
+      throw new Error(
+        'OpenAI ChatGPT subscription login is not a Platform API key. Use an API key from platform.openai.com/api-keys for SDK AgentLoop.',
+      );
+    }
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
