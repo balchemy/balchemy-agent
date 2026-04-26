@@ -8,6 +8,8 @@ import { OpenAiAdapter } from './llm-adapters/openai';
 import { AnthropicAdapter } from './llm-adapters/anthropic';
 import { ModelRouter } from './model-router';
 import { TelemetryReporter } from './telemetry-reporter';
+import { checkAllRules } from './rule-checker';
+import type { BehaviorRuleLimits } from './rule-checker';
 import type {
   AgentLoopConfig,
   AgentStatus,
@@ -56,6 +58,14 @@ export class AgentLoop {
   private portfolioCache: PortfolioCache | null = null;
   private rulesCache: RulesCache | null = null;
 
+  /** Client-side behavior rule limits for pre-check enforcement. */
+  private readonly ruleLimits: BehaviorRuleLimits;
+
+  /** Trades executed in the current clock-hour (reset each hour). */
+  private tradesThisHour = 0;
+  /** Timestamp (ms) of the hour boundary when tradesThisHour was last reset. */
+  private currentHourStart = 0;
+
   /** publicId extracted from the MCP endpoint path (last path segment). */
   private readonly publicId: string;
 
@@ -92,10 +102,19 @@ export class AgentLoop {
       this.modelRouter = null;
     }
 
+    // Extract client-side rule limits from behaviorRules config
+    this.ruleLimits = extractRuleLimits(config.behaviorRules);
+
     // Derive the telemetry endpoint from the MCP endpoint:
     //   https://api.balchemy.ai/mcp/abc123  →  https://api.balchemy.ai/api/agent-telemetry/abc123
     const telemetryEndpoint = config.mcpEndpoint.replace(/\/mcp\//, '/api/agent-telemetry/');
-    this.telemetry = new TelemetryReporter(telemetryEndpoint, config.apiKey);
+    this.telemetry = new TelemetryReporter(
+      telemetryEndpoint,
+      config.apiKey,
+      30_000,
+      undefined,
+      { sdkVersion: config.sdkVersion, cliVersion: config.cliVersion },
+    );
   }
 
   async start(): Promise<void> {
@@ -156,7 +175,7 @@ export class AgentLoop {
       eventsReceived: this.eventsReceived,
       decisionsExecuted: this.decisionsExecuted,
       tradesExecuted: this.tradesExecuted,
-      llmCallsToday: 0,
+      llmCallsToday: this.costTracker.getCallCount(),
       llmCostToday: this.costTracker.getTodaySpend(),
       maxDailyLlmCost: this.config.maxDailyLlmCost ?? 5,
       consecutiveLlmFailures: this.decisionHandler.getConsecutiveFailures(),
@@ -183,7 +202,7 @@ export class AgentLoop {
         const parsed = JSON.parse(text) as Record<string, unknown>;
         const reply = parsed['reply'] ?? parsed['text'];
         return typeof reply === 'string' ? reply : text;
-      } catch {
+      } catch (_error: unknown) {
         return text;
       }
     } catch (err: unknown) {
@@ -288,14 +307,32 @@ export class AgentLoop {
         reasoning: decision.reasoning,
       });
 
-      // Execute via MCP
+      // Execute via MCP (with client-side rule pre-check)
       if (decision.action === 'buy' || decision.action === 'sell') {
+        // --- Client-side BehaviorRule pre-check ---
+        const tradeAmount = parseFloat(decision.amount ?? '0') || 0;
+        this.resetHourlyCounterIfNeeded();
+
+        const ruleCheck = checkAllRules(tradeAmount, this.tradesThisHour, this.ruleLimits);
+        if (!ruleCheck.allowed) {
+          // Block the trade: convert to "hold", notify via onError, skip MCP call
+          this.config.onError?.(new Error(`[rule-checker] Trade blocked: ${ruleCheck.reason}`));
+          decision.ruleCorrection = {
+            original: decision.action,
+            corrected: 'hold',
+            reason: ruleCheck.reason ?? 'behavior rule violation',
+          };
+          decision.action = 'hold';
+          this.config.onDecision?.(decision);
+          return;
+        }
+
+        const tradeMessage = `${decision.action} ${decision.amount ?? ''} SOL ${decision.token ?? ''}`.trim();
         const tradeResponse = await this.mcp.callTool('trade_command', {
-          intent: decision.action,
-          token: decision.token,
-          amount: decision.amount,
+          message: tradeMessage,
         });
         this.tradesExecuted++;
+        this.tradesThisHour++;
         this.lastTradeAt = Date.now();
 
         // Fire trade result callback
@@ -331,9 +368,10 @@ export class AgentLoop {
       const snapshot: AgentPortfolioSnapshot = parsed ?? {};
       this.portfolioCache = { snapshot, fetchedAt: now };
       return snapshot;
-    } catch {
-      // Graceful degradation — continue with empty snapshot
-      this.config.onError?.(new Error('agent_portfolio fetch failed — continuing with empty snapshot'));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Graceful degradation: continue with empty snapshot.
+      this.config.onError?.(new Error(`agent_portfolio fetch failed: ${msg}; continuing with empty snapshot`));
       return {};
     }
   }
@@ -356,10 +394,23 @@ export class AgentLoop {
       const compressed = contents[0]?.text ?? '';
       this.rulesCache = { compressed, fetchedAt: now };
       return compressed;
-    } catch {
-      // Graceful degradation — continue without rule context
-      this.config.onError?.(new Error('behavior-rules resource fetch failed — continuing without rules'));
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Graceful degradation: continue without rule context.
+      this.config.onError?.(new Error(`behavior-rules resource fetch failed: ${msg}; continuing without rules`));
       return '';
+    }
+  }
+
+  /**
+   * Reset the hourly trade counter when the clock rolls to a new hour.
+   * Uses truncated-hour comparison so the counter resets on exact hour boundaries.
+   */
+  private resetHourlyCounterIfNeeded(): void {
+    const nowHour = Math.floor(Date.now() / 3_600_000) * 3_600_000;
+    if (nowHour !== this.currentHourStart) {
+      this.tradesThisHour = 0;
+      this.currentHourStart = nowHour;
     }
   }
 
@@ -386,4 +437,20 @@ export class AgentLoop {
       }
     }
   }
+}
+
+/**
+ * Extract the two hard-limit fields from the untyped behaviorRules config bag.
+ * Returns an empty object (no limits enforced) if the config is absent or malformed.
+ */
+function extractRuleLimits(rules?: Record<string, unknown>): BehaviorRuleLimits {
+  if (!rules) return {};
+  const limits: BehaviorRuleLimits = {};
+  if (typeof rules['maxTradeSol'] === 'number' && rules['maxTradeSol'] > 0) {
+    limits.maxTradeSol = rules['maxTradeSol'];
+  }
+  if (typeof rules['maxTradesPerHour'] === 'number' && rules['maxTradesPerHour'] > 0) {
+    limits.maxTradesPerHour = rules['maxTradesPerHour'];
+  }
+  return limits;
 }

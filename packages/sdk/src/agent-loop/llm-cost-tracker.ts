@@ -18,6 +18,7 @@ export interface LlmCostTrackerConfig {
 export class LlmCostTracker {
   private readonly maxDailyUsd: number;
   private todaySpendUsd = 0;
+  private todayCallCount = 0;
   private currentDay: string;
 
   constructor(config: LlmCostTrackerConfig) {
@@ -37,6 +38,12 @@ export class LlmCostTracker {
       (inputTokens / 1_000_000) * pricing.input +
       (outputTokens / 1_000_000) * pricing.output;
     this.todaySpendUsd += cost;
+    this.todayCallCount += 1;
+  }
+
+  getCallCount(): number {
+    this.resetIfNewDay(new Date());
+    return this.todayCallCount;
   }
 
   getTodaySpend(): number {
@@ -65,6 +72,7 @@ export class LlmCostTracker {
     const dayKey = this.getDayKey(now);
     if (dayKey !== this.currentDay) {
       this.todaySpendUsd = 0;
+      this.todayCallCount = 0;
       this.currentDay = dayKey;
     }
   }

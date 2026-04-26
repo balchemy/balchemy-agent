@@ -1,15 +1,22 @@
 {
   "name": "balchemy",
-  "version": "0.1.13",
+  "version": "0.1.16",
   "license": "MIT",
   "type": "module",
-  "description": "Autonomous AI trading agent for Solana and Base chains",
+  "description": "Scaffold and run a Balchemy autonomous AI trading agent in 5 minutes",
   "main": "dist/index.js",
   "bin": {
-    "balchemy": "dist/index.js"
+    "balchemy": "dist/index.js",
+    "create-balchemy-agent": "dist/index.js",
+    "balchemy-agent": "dist/index.js"
   },
   "files": [
     "dist",
+    "!dist/**/__tests__",
+    "!dist/**/*.spec.d.ts",
+    "!dist/**/*.spec.d.ts.map",
+    "!dist/**/*.spec.js",
+    "!dist/**/*.spec.js.map",
     "assets",
     "templates",
     "README.md"
@@ -36,7 +43,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@balchemyai/agent-sdk": "^0.1.1",
+    "@balchemyai/agent-sdk": "workspace:^",
     "@inkjs/ui": "^2.0.0",
     "dotenv": "^16.0.0",
     "ink": "^6.0.0",
@@ -50,7 +57,7 @@
     "typescript": "5.8.3"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "pnpm --dir ../sdk build && tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "prepublishOnly": "pnpm run typecheck && pnpm run build"
   }

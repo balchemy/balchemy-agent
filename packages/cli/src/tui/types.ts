@@ -59,4 +59,6 @@ export interface TuiConfig {
   publicId: string;
   strategy: string;
   shadowMode: boolean;
+  behaviorRules?: Record<string, unknown>;
+  autoSeedSubscriptions?: boolean;
 }

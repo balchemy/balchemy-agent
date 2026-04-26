@@ -1,50 +1,92 @@
-// src/tui/ChatPanel.tsx — Left-border messages + PgUp/PgDn scroll
-import React, { useState, useCallback, useEffect } from "react";
+// src/tui/ChatPanel.tsx — Polished activity surface with compact message cards
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { Box, Text, useInput } from "ink";
 import { TextInput } from "@inkjs/ui";
 import type { ChatMessage } from "./types.js";
 
 function formatTime(ts: number): string {
-  return new Date(ts).toLocaleTimeString("en-GB", {
+  return new Date(ts).toLocaleTimeString(undefined, {
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
-// ── Message components — left-border style ───────────────────────────────────
+function getSystemMeta(text: string): { label: string; color: "cyan" | "yellow" | "white"; body: string } {
+  if (text.startsWith("Tool:")) {
+    return {
+      label: "TOOL",
+      color: "yellow",
+      body: text.replace(/^Tool:\s*/, ""),
+    };
+  }
+
+  if (text.startsWith("New token:")) {
+    return {
+      label: "EVENT",
+      color: "cyan",
+      body: text.replace(/^New token:\s*/, ""),
+    };
+  }
+
+  return {
+    label: "NOTE",
+    color: "white",
+    body: text,
+  };
+}
+
+interface MessageCardProps {
+  borderColor: "cyan" | "yellow" | "green" | "red" | "gray";
+  label: string;
+  labelColor: "cyan" | "yellow" | "green" | "red" | "white";
+  msg: ChatMessage;
+  children: React.ReactNode;
+}
+
+function MessageCard({
+  borderColor,
+  label,
+  labelColor,
+  msg,
+  children,
+}: MessageCardProps): React.ReactElement {
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Box marginBottom={0}>
+        <Text color={labelColor} bold>{label}</Text>
+        <Text dimColor>  {formatTime(msg.timestamp)}</Text>
+      </Box>
+      <Box borderStyle="round" borderColor={borderColor} paddingX={1}>
+        {children}
+      </Box>
+    </Box>
+  );
+}
 
 function AgentMsg({ msg }: { msg: ChatMessage }): React.ReactElement {
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Box>
-        <Text color="cyan" bold>{"\u2502"} </Text>
-        <Text color="cyan" bold>AI</Text>
-        <Text dimColor> {formatTime(msg.timestamp)}</Text>
-      </Box>
-      <Box>
-        <Text color="cyan">{"\u2502"} </Text>
-        <Text color="white" wrap="wrap">{msg.text}</Text>
-      </Box>
-    </Box>
+    <MessageCard borderColor="cyan" label="AI" labelColor="cyan" msg={msg}>
+      <Text color="white" wrap="wrap">{msg.text}</Text>
+    </MessageCard>
   );
 }
 
 function UserMsg({ msg }: { msg: ChatMessage }): React.ReactElement {
   return (
-    <Box flexDirection="column" marginBottom={0}>
-      <Box>
-        <Text color="magenta" bold>{"\u2502"} </Text>
-        <Text color="white" wrap="wrap">{msg.text}</Text>
-        <Text dimColor> {formatTime(msg.timestamp)}</Text>
-      </Box>
-    </Box>
+    <MessageCard borderColor="yellow" label="YOU" labelColor="yellow" msg={msg}>
+      <Text color="white" wrap="wrap">{msg.text}</Text>
+    </MessageCard>
   );
 }
 
 function SystemMsg({ msg }: { msg: ChatMessage }): React.ReactElement {
+  const meta = getSystemMeta(msg.text);
+
   return (
-    <Box marginBottom={0}>
-      <Text dimColor>  {formatTime(msg.timestamp)} {"\u00b7"} {msg.text}</Text>
+    <Box marginBottom={1}>
+      <Text color={meta.color} bold>{meta.label}</Text>
+      <Text dimColor>  {formatTime(msg.timestamp)}  </Text>
+      <Text dimColor wrap="wrap">{meta.body}</Text>
     </Box>
   );
 }
@@ -52,33 +94,24 @@ function SystemMsg({ msg }: { msg: ChatMessage }): React.ReactElement {
 function TradeMsg({ msg }: { msg: ChatMessage }): React.ReactElement {
   const isBuy = msg.action === "buy";
   const color = isBuy ? "green" : "red";
+
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Box>
-        <Text color={color} bold>{"\u2502"} {isBuy ? "\u25b2 BUY" : "\u25bc SELL"}</Text>
-        <Text dimColor> {formatTime(msg.timestamp)}</Text>
-      </Box>
-      <Box>
-        <Text color={color}>{"\u2502"} </Text>
-        <Text color={color} bold wrap="wrap">{msg.text}</Text>
-      </Box>
-    </Box>
+    <MessageCard
+      borderColor={color}
+      label={isBuy ? "BUY" : "SELL"}
+      labelColor={color}
+      msg={msg}
+    >
+      <Text color={color} bold wrap="wrap">{msg.text}</Text>
+    </MessageCard>
   );
 }
 
 function ErrorMsg({ msg }: { msg: ChatMessage }): React.ReactElement {
   return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Box>
-        <Text color="red" bold>{"\u2502"} </Text>
-        <Text color="red" bold>{"\u2717"} Error</Text>
-        <Text dimColor> {formatTime(msg.timestamp)}</Text>
-      </Box>
-      <Box>
-        <Text color="red">{"\u2502"} </Text>
-        <Text color="red" wrap="wrap">{msg.text}</Text>
-      </Box>
-    </Box>
+    <MessageCard borderColor="red" label="ERROR" labelColor="red" msg={msg}>
+      <Text color="red" wrap="wrap">{msg.text}</Text>
+    </MessageCard>
   );
 }
 
@@ -94,13 +127,14 @@ function MessageLine({ msg }: { msg: ChatMessage }): React.ReactElement {
 
 // ── ChatPanel ────────────────────────────────────────────────────────────────
 
-const PAGE_SIZE = 30;
 const SCROLL_STEP = 5;
 
 interface ChatPanelProps {
   messages: ChatMessage[];
   onSend: (text: string) => void | Promise<void>;
   inputActive: boolean;
+  hideInput?: boolean;
+  pageSize?: number;
   inputPlaceholder?: string;
 }
 
@@ -108,13 +142,15 @@ export function ChatPanel({
   messages,
   onSend,
   inputActive,
+  hideInput = false,
+  pageSize = 30,
   inputPlaceholder,
 }: ChatPanelProps): React.ReactElement {
   const [inputKey, setInputKey] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
+  const prevCount = useRef(messages.length);
 
   // Auto-scroll to bottom on new messages (only if already at bottom)
-  const prevCount = React.useRef(messages.length);
   useEffect(() => {
     if (messages.length > prevCount.current && scrollOffset === 0) {
       // Already at bottom — stay there (no-op)
@@ -128,7 +164,7 @@ export function ChatPanel({
   // PgUp / PgDn scroll
   useInput((_input, key) => {
     if (key.pageUp) {
-      setScrollOffset((prev) => Math.min(prev + SCROLL_STEP, Math.max(0, messages.length - PAGE_SIZE)));
+      setScrollOffset((prev) => Math.min(prev + SCROLL_STEP, Math.max(0, messages.length - pageSize)));
       return;
     }
     if (key.pageDown) {
@@ -140,7 +176,7 @@ export function ChatPanel({
   // Calculate visible window
   const total = messages.length;
   const end = total - scrollOffset;
-  const start = Math.max(0, end - PAGE_SIZE);
+  const start = Math.max(0, end - pageSize);
   const visibleMessages = messages.slice(start, Math.max(end, 0));
   const hasOlder = start > 0;
   const isAtBottom = scrollOffset === 0;
@@ -158,15 +194,16 @@ export function ChatPanel({
       {/* Scroll-up indicator */}
       {hasOlder && (
         <Box paddingX={1}>
-          <Text dimColor>{"\u2191"} {start} older messages — PgUp to scroll</Text>
+          <Text dimColor>{"\u2191"} {start} earlier items  ·  PgUp scrolls history</Text>
         </Box>
       )}
 
-      {/* Message history — justify end so messages stack from bottom */}
+      {/* Message history */}
       <Box flexDirection="column" flexGrow={1} overflowY="hidden" paddingX={1} justifyContent="flex-end">
         {visibleMessages.length === 0 && (
-          <Box marginTop={1}>
-            <Text dimColor>  Waiting for agent...</Text>
+          <Box flexDirection="column" marginBottom={1}>
+            <Text color="white" bold>No activity yet</Text>
+            <Text dimColor>Agent replies, live decisions and tool traces will appear here.</Text>
           </Box>
         )}
         {visibleMessages.map((msg) => (
@@ -177,23 +214,27 @@ export function ChatPanel({
       {/* Scroll-down indicator */}
       {!isAtBottom && (
         <Box paddingX={1}>
-          <Text dimColor>{"\u2193"} {scrollOffset} newer messages — PgDn to scroll</Text>
+          <Text dimColor>{"\u2193"} {scrollOffset} newer items  ·  PgDn jumps back down</Text>
         </Box>
       )}
 
-      {/* Input area */}
-      <Box paddingX={1} paddingY={0}>
-        <Text color="cyan" bold>{"\u276f"} </Text>
-        {inputActive ? (
-          <TextInput
-            key={inputKey}
-            placeholder={inputPlaceholder ?? "Send a message..."}
-            onSubmit={handleSubmit}
-          />
-        ) : (
-          <Text dimColor>Starting agent...</Text>
-        )}
-      </Box>
+      {!hideInput && (
+        <Box paddingX={1} paddingY={0}>
+          <Box borderStyle="round" borderColor={inputActive ? "cyan" : "gray"} paddingX={1} flexGrow={1}>
+            <Text color={inputActive ? "cyan" : "gray"} bold>Prompt</Text>
+            <Text dimColor>  </Text>
+            {inputActive ? (
+              <TextInput
+                key={inputKey}
+                placeholder={inputPlaceholder ?? "Ask, adjust rules, or inspect the session..."}
+                onSubmit={handleSubmit}
+              />
+            ) : (
+              <Text dimColor>Starting agent session...</Text>
+            )}
+          </Box>
+        </Box>
+      )}
     </Box>
   );
 }

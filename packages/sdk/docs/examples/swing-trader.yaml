@@ -1,0 +1,50 @@
+# Swing Trader Strategy
+#
+# Holds positions for 2–72 hours. Enters on RSI oversold + MACD crossover.
+# Targets 20% gain, stops at 10% loss. Uses a trailing stop to lock in profits.
+#
+# Risk profile: MEDIUM — requires technical indicator signals, holds through
+# short-term volatility.
+# Recommended LLM: claude-haiku-4-5 or gpt-4o-mini
+
+mcp_endpoint: "${MCP_ENDPOINT}"
+api_key: "${BALCHEMY_API_KEY}"
+
+llm:
+  provider: anthropic
+  api_key: "${LLM_API_KEY}"
+  model: claude-haiku-4-5
+  max_daily_usd: 2              # Swing trader fires infrequently
+  timeout_ms: 10000
+
+strategy: swing-trader
+
+behavior_rules:
+  version: "1"
+  preset: swing-trader
+
+  filters:
+    min_liquidity_usd: 50000    # Only liquid assets for swing trades
+    max_market_cap_usd: 500000000  # Mid-cap and below
+    allowed_chains: [solana, base]
+
+  entry:
+    trigger: rsi_signal
+    indicators: [rsi, macd]
+    rsi_oversold: 30            # Enter when RSI < 30 (oversold)
+    max_position_usd: 200       # Larger positions — fewer, higher-conviction trades
+    slippage_bps: 100           # Tight slippage — not chasing
+    min_confidence: 0.75        # High confidence required
+
+  exit:
+    take_profit_pct: 20         # Exit at +20%
+    stop_loss_pct: 10           # Exit at -10%
+    trailing_stop_pct: 8        # Trail 8% below peak once in profit
+    min_hold_hours: 2           # Never exit in first 2 hours (noise avoidance)
+    max_hold_hours: 72          # Force exit after 3 days
+
+  risk:
+    max_single_trade_usd: 200
+    max_daily_loss_usd: 300
+    max_open_positions: 5
+    pause_on_drawdown_pct: 25

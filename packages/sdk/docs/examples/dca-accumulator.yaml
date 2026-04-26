@@ -1,0 +1,41 @@
+# DCA Accumulator Strategy
+#
+# Dollar-cost averages into SOL on a fixed schedule.
+# Buys $10 of SOL every 24 hours regardless of price.
+# Pauses DCA if portfolio drops more than 30% from peak.
+#
+# Risk profile: LOW — patient accumulation, no active trading decisions.
+# Recommended LLM: gpt-4o-mini (sufficient for simple buy confirmations)
+
+mcp_endpoint: "${MCP_ENDPOINT}"
+api_key: "${BALCHEMY_API_KEY}"
+
+llm:
+  provider: openai
+  api_key: "${LLM_API_KEY}"
+  model: gpt-4o-mini
+  max_daily_usd: 1              # DCA fires once per day — very low LLM cost
+  timeout_ms: 15000
+
+strategy: dca-accumulator
+
+behavior_rules:
+  version: "1"
+  preset: dca-accumulator
+
+  dca:
+    target_token: SOL
+    amount_usd: 10              # Buy $10 per interval
+    interval_hours: 24          # Daily purchases
+    max_total_usd: 1000         # Stop after $1000 total invested
+
+  risk:
+    max_single_trade_usd: 10    # Each DCA buy is capped at $10
+    pause_on_drawdown_pct: 30   # Pause if portfolio value drops 30% from peak
+    max_open_positions: 1       # Only hold SOL — single-asset strategy
+    allowed_chains: [solana]
+
+  filters:
+    allowed_tokens:
+      # Wrapped SOL (wSOL) — the only token this strategy trades
+      - "So11111111111111111111111111111111111111112"

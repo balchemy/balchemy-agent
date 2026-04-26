@@ -4,7 +4,7 @@
  * Covers:
  *   - listTools: success path, JSON-RPC result parsing
  *   - callTool: sends correct JSON-RPC body, returns result
- *   - ping: returns true for valid listTools response
+   *   - ping: returns true for valid health response
  *   - SSE payload extraction: data: lines parsed correctly
  *   - JSON-RPC error response: AgentSdkError thrown with code=execution_error
  *   - Network error: wrapped as AgentSdkError with code=network_error
@@ -34,6 +34,14 @@ function makeFetchSuccess(result: unknown): jest.Mock {
     text: jest.fn().mockResolvedValue(
       JSON.stringify({ jsonrpc: "2.0", id: 1, result })
     ),
+  });
+}
+
+function makeHttpSuccess(result: unknown): jest.Mock {
+  return jest.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    text: jest.fn().mockResolvedValue(JSON.stringify(result)),
   });
 }
 
@@ -132,8 +140,8 @@ describe("BalchemyMcpClient", () => {
 
   // ── ping ──────────────────────────────────────────────────────────────────
   describe("ping", () => {
-    it("returns true when listTools returns an array", async () => {
-      const fetchFn = makeFetchSuccess({ tools: [] });
+    it("returns true when health returns ok", async () => {
+      const fetchFn = makeHttpSuccess({ ok: true });
       const client = buildClient(fetchFn);
       const ok = await client.ping();
       expect(ok).toBe(true);

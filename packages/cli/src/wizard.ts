@@ -21,6 +21,7 @@ import { loginWithOpenAI } from "./openai-oauth.js";
 import { randomUUID } from "crypto";
 import { renderLogo } from "./terminal-logo.js";
 import { saveAgent } from "./agent-store.js";
+import { buildWizardBehaviorRules } from './behavior-rules.util.js';
 
 // ── Brand Colors ──────────────────────────────────────────────────────────────
 
@@ -31,13 +32,9 @@ const R = "\x1b[0m";                 // reset
 const T = "\x1b[38;2;0;172;176m";   // teal
 
 const WELCOME_TEXT = `
-  ${G}B${T}alchemy ${W}Agent${R}  ${D}v0.1.0${R}
-
-  ${D}To deploy a fully autonomous trading bot, you must provide${R}
-  ${D}your own LLM. Your agent's strategy, every decision, and the${R}
-  ${D}entire execution flow are driven by the model you choose.${R}
-  ${D}Select the right provider and model for your trading style${R}
-  ${D}${G}— everything is in your hands.${R}
+  ${G}B${T}alchemy ${W}Agent${R}  ${D}v0.1.15${R}
+  ${D}Configure your model, connect your agent, and launch a clean live cockpit.${R}
+  ${D}Same control surface, less noise. Everything important stays visible.${R}
 `;
 
 // ── Provider Definitions ──────────────────────────────────────────────────────
@@ -185,7 +182,7 @@ const STRATEGIES: StrategyDef[] = [
 
 // ── Spinner ───────────────────────────────────────────────────────────────────
 
-const SPINNER_FRAMES = ["    ", "   ", "  ", " ", "", " ", "  ", "   "];
+const SPINNER_FRAMES = [".  ", ".. ", "...", " ..", "  ."];
 
 class Spinner {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -207,12 +204,12 @@ class Spinner {
 
   succeed(msg?: string): void {
     this.stop();
-    process.stdout.write(`\r  ${T}*${R} ${msg ?? this.message}\n`);
+    process.stdout.write(`\r  \x1b[1;32mOK${R} ${msg ?? this.message}\n`);
   }
 
   fail(msg?: string): void {
     this.stop();
-    process.stdout.write(`\r  \x1b[1;31mx${R} ${msg ?? this.message}\n`);
+    process.stdout.write(`\r  \x1b[1;31mNO${R} ${msg ?? this.message}\n`);
   }
 
   private stop(): void {
@@ -234,7 +231,7 @@ function spin(message: string): Spinner {
 function ask(rl: readline.Interface, question: string, defaultVal = ""): Promise<string> {
   return new Promise((resolve) => {
     const hint = defaultVal ? ` \x1b[38;5;245m[${defaultVal}]\x1b[0m` : "";
-    rl.question(`  ${question}${hint}: `, (answer) => {
+    rl.question(`  ${T}${question}${R}${hint}: `, (answer) => {
       resolve(answer.trim() || defaultVal);
     });
   });
@@ -242,7 +239,7 @@ function ask(rl: readline.Interface, question: string, defaultVal = ""): Promise
 
 function askSecret(rl: readline.Interface, question: string): Promise<string> {
   return new Promise((resolve) => {
-    rl.question(`  ${question}: `, (answer) => {
+    rl.question(`  ${T}${question}${R}: `, (answer) => {
       resolve(answer.trim());
     });
   });
@@ -257,8 +254,12 @@ function askNumber(rl: readline.Interface, question: string, defaultVal: number)
 
 function printChoices<T extends { label: string }>(items: T[], extraInfo?: (item: T, i: number) => string): void {
   items.forEach((item, i) => {
-    const extra = extraInfo ? `  \x1b[38;5;245m${extraInfo(item, i)}\x1b[0m` : "";
-    process.stdout.write(`    \x1b[1;37m${i + 1}.\x1b[0m ${item.label}${extra}\n`);
+    const info = extraInfo?.(item, i) ?? "";
+    const defaultTag = i === 0 ? `  ${T}default${R}` : "";
+    process.stdout.write(`    \x1b[1;37m${String(i + 1).padStart(2, "0")}\x1b[0m  ${item.label}${defaultTag}\n`);
+    if (info) {
+      process.stdout.write(`        \x1b[38;5;245m${info}\x1b[0m\n`);
+    }
   });
 }
 
@@ -270,6 +271,7 @@ async function askChoice<T extends { label: string }>(
 ): Promise<T> {
   process.stdout.write(`\n  \x1b[1;36m${question}\x1b[0m\n`);
   printChoices(items, extraInfo);
+  process.stdout.write(`  ${D}Press Enter to use the default option.${R}\n`);
   const answer = await ask(rl, `Choose [1-${items.length}]`, "1");
   const idx = parseInt(answer, 10) - 1;
   if (idx >= 0 && idx < items.length) return items[idx];
@@ -277,7 +279,41 @@ async function askChoice<T extends { label: string }>(
 }
 
 function printStep(step: number, total: number, label: string): void {
-  process.stdout.write(`\n  \x1b[1;35m[${step}/${total}]\x1b[0m \x1b[1;37m${label}\x1b[0m\n`);
+  process.stdout.write(
+    `\n  ${T}Step ${String(step).padStart(2, "0")}/${String(total).padStart(2, "0")}${R}  ${W}${label}${R}\n  ${D}${"-".repeat(54)}${R}\n`,
+  );
+}
+
+function maskValue(value: string, head = 8, tail = 4): string {
+  if (value.length <= head + tail + 1) return value;
+  return `${value.slice(0, head)}...${value.slice(-tail)}`;
+}
+
+function printBlock(title: string, lines: string[], tone: "brand" | "success" | "warning" = "brand"): void {
+  const color =
+    tone === "success"
+      ? "\x1b[1;32m"
+      : tone === "warning"
+        ? G
+        : T;
+  process.stdout.write(`  ${color}${title}${R}\n`);
+  for (const line of lines) {
+    process.stdout.write(`  ${D}${line}${R}\n`);
+  }
+  process.stdout.write(`  ${D}${"-".repeat(54)}${R}\n`);
+}
+
+function printKeyValueBlock(
+  title: string,
+  rows: Array<{ label: string; value: string }>,
+  tone: "brand" | "success" | "warning" = "brand",
+): void {
+  const maxLabel = rows.reduce((acc, row) => Math.max(acc, row.label.length), 0);
+  printBlock(
+    title,
+    rows.map((row) => `${row.label.padEnd(maxLabel)}  ${row.value}`),
+    tone,
+  );
 }
 
 function printSuccess(msg: string): void {
@@ -290,6 +326,10 @@ function printInfo(msg: string): void {
 
 function printError(msg: string): void {
   process.stdout.write(`  \x1b[1;31m✗\x1b[0m ${msg}\n`);
+}
+
+function printWarning(msg: string): void {
+  process.stdout.write(`  ${G}!${R} ${msg}\n`);
 }
 
 // ── MCP Call Helper ───────────────────────────────────────────────────────────
@@ -438,6 +478,7 @@ interface WizardResult {
   strategy: StrategyDef;
   maxDailyLlmCost: number;
   shadowMode: boolean;
+  behaviorRules: Record<string, unknown>;
 }
 
 function generateYaml(r: WizardResult): string {
@@ -448,7 +489,7 @@ function generateYaml(r: WizardResult): string {
 
   return [
     `# Balchemy Agent Configuration`,
-    `# Generated by create-balchemy-agent`,
+    `# Generated by balchemy`,
     `# Agent: ${r.publicId} | Provider: ${r.provider.label} | Model: ${r.model.id}`,
     ``,
     `mcp_endpoint: "\${MCP_ENDPOINT}"`,
@@ -466,11 +507,10 @@ function generateYaml(r: WizardResult): string {
     `shadow_mode: ${r.shadowMode}`,
     ``,
     `behavior_rules:`,
-    `  version: "1"`,
-    `  preset: ${r.strategy.preset}`,
-    r.strategy.naturalLanguageRules
-      ? `  rules: "${r.strategy.naturalLanguageRules}"`
-      : `  # Define your rules here`,
+    ...Object.entries(r.behaviorRules).map(([key, value]) => {
+      if (typeof value === 'string') return `  ${key}: ${JSON.stringify(value)}`;
+      return `  ${key}: ${String(value)}`;
+    }),
     ``,
   ]
     .filter((l) => l !== null)
@@ -599,6 +639,11 @@ export async function runWizard(outDir: string): Promise<void> {
     printSuccess(`Model: ${model.label} (${model.id})`);
 
     const maxDailyLlmCost = await askNumber(rl, "Max daily LLM spend (USD)", 5);
+    printKeyValueBlock("LLM profile", [
+      { label: "Provider", value: provider.label },
+      { label: "Model", value: model.label },
+      { label: "Daily cap", value: `$${maxDailyLlmCost.toFixed(2)}` },
+    ]);
 
     // ── Step 4: Agent ─────────────────────────────────────────────────────
     printStep(4, TOTAL_STEPS, "Agent Setup");
@@ -614,6 +659,10 @@ export async function runWizard(outDir: string): Promise<void> {
     let masterKey: string | null = null;
     let solAddr = "";
     let baseAddr = "";
+    let maxTradeSol = 0.05;
+    let maxTradeUsd = 10;
+    let strategyRules = "";
+    let behaviorRules: Record<string, unknown> = {};
 
     if ((agentChoice as { value: string }).value === "new") {
       const agentName = await ask(rl, "Agent name", `agent-${Date.now().toString(36)}`);
@@ -631,14 +680,17 @@ export async function runWizard(outDir: string): Promise<void> {
       publicId = onboard.publicId;
 
       onboardSpinner.succeed(`Agent created: ${publicId}`);
-      printSuccess(`MCP endpoint: ${mcpEndpoint}`);
-      printSuccess(`API key: ${apiKey}`);
+      printKeyValueBlock("Agent access", [
+        { label: "Agent", value: publicId },
+        { label: "Endpoint", value: mcpEndpoint },
+        { label: "API key", value: maskValue(apiKey, 10, 4) },
+      ], "success");
 
       // ── MCP Setup (same flow as MCP onboarding docs) ──────────────────
 
       // Step A: Bind developer wallet
       process.stdout.write("\n");
-      printStep(5, 8, "Developer Wallet");
+      printStep(5, TOTAL_STEPS, "Developer Wallet");
       printInfo("Your EVM wallet is used for recovery, Hub access, and withdrawals.");
       printInfo("When you connect this wallet to balchemy.ai, you'll see this bot in your Hub dashboard.\n");
       const walletAddr = await ask(rl, "Your EVM wallet address (0x...)");
@@ -655,9 +707,12 @@ export async function runWizard(outDir: string): Promise<void> {
           bindSpinner.succeed("Developer wallet bound");
           if (masterKeyMatch) {
             masterKey = masterKeyMatch[0];
-            printSuccess(`Master key: ${masterKey}`);
-            printInfo("\x1b[1;33mSave this master key! It cannot be shown again.\x1b[0m");
-            printInfo("Use it for: key rotation, wallet changes, bot deletion, recovery.\n");
+            printKeyValueBlock("Recovery", [
+              { label: "Developer wallet", value: walletAddr },
+              { label: "Master key", value: masterKey },
+            ], "warning");
+            printWarning("Save this master key now. It will not be shown again.");
+            printInfo("Use it for key rotation, wallet changes, bot deletion and recovery.\n");
           }
         } else {
           bindSpinner.fail("Could not bind wallet (you can do this later via chat)");
@@ -667,7 +722,7 @@ export async function runWizard(outDir: string): Promise<void> {
       }
 
       // Step B: Create trading wallets
-      printStep(6, 8, "Trading Wallets");
+      printStep(6, TOTAL_STEPS, "Trading Wallets");
       const solSpinner = spin("Creating Solana wallet...");
       const solResult = await callSetupTool(mcpEndpoint, apiKey, {
         action: "create_wallet",
@@ -684,7 +739,11 @@ export async function runWizard(outDir: string): Promise<void> {
       baseAddr = extractAddress(baseResult);
       baseSpinner.succeed(`Base wallet: ${baseAddr}`);
 
-      printInfo(`\n\x1b[1;33mFund your Solana wallet (${solAddr}) with at least 0.05 SOL to start trading.\x1b[0m\n`);
+      printKeyValueBlock("Trading wallets", [
+        { label: "Solana", value: solAddr },
+        { label: "Base", value: baseAddr },
+      ], "success");
+      printWarning(`Fund your Solana wallet (${solAddr}) with at least 0.05 SOL to start trading.\n`);
 
       // Step C: Configure slippage
       printStep(7, TOTAL_STEPS, "Slippage");
@@ -701,16 +760,20 @@ export async function runWizard(outDir: string): Promise<void> {
       printStep(8, TOTAL_STEPS, "Trade Limits");
       printInfo("Set a hard limit per trade. Your LLM cannot exceed this, no matter what.");
       printInfo("This protects you if the LLM hallucinates or makes an unexpected decision.\n");
-      const maxTradeSol = await askNumber(rl, "Max SOL per trade", 0.05);
-      const maxTradeUsd = await askNumber(rl, "Max USD per trade", 10);
+      maxTradeSol = await askNumber(rl, "Max SOL per trade", 0.05);
+      maxTradeUsd = await askNumber(rl, "Max USD per trade", 10);
       printSuccess(`Hard limits: ${maxTradeSol} SOL / $${maxTradeUsd} per trade`);
+      printKeyValueBlock("Execution guardrails", [
+        { label: "Slippage", value: `${slippageInput} bps (${(slippageInput / 100).toFixed(1)}%)` },
+        { label: "Max per trade", value: `${maxTradeSol} SOL / $${maxTradeUsd}` },
+      ], "warning");
 
       // Step E: Trading strategy (natural language)
       printStep(9, TOTAL_STEPS, "Trading Strategy");
       printInfo("Describe your strategy in natural language. Your LLM will execute it.");
       printInfo('Example: "PumpFun\'dan yeni tokenleri tara, hacmi 10K+ olanlari al,');
       printInfo(' max 0.01 SOL per trade, 2x\'de yarisini sat, max 1 pozisyon"\n');
-      const strategyRules = await ask(
+      strategyRules = await ask(
         rl,
         "Your strategy",
         "Max 0.01 SOL per trade, stop loss 30%, take profit 100%, max 1 position",
@@ -752,10 +815,22 @@ export async function runWizard(outDir: string): Promise<void> {
       } catch {
         healthSpinner.succeed("Could not reach endpoint (continuing)");
       }
+
+      printKeyValueBlock("Connected agent", [
+        { label: "Agent", value: publicId },
+        { label: "Endpoint", value: mcpEndpoint },
+        { label: "API key", value: maskValue(apiKey, 10, 4) },
+      ], "success");
     }
 
     const strategy = STRATEGIES[0];
     const shadowMode = false;
+    behaviorRules = buildWizardBehaviorRules({
+      preset: strategy.preset,
+      naturalLanguageRules: strategyRules,
+      maxTradeSol,
+      maxTradeUsd,
+    });
 
     // ── Save & Launch ─────────────────────────────────────────────────────
     process.stdout.write("\n");
@@ -770,6 +845,7 @@ export async function runWizard(outDir: string): Promise<void> {
       strategy,
       maxDailyLlmCost,
       shadowMode,
+      behaviorRules,
     };
 
     const yamlContent = generateYaml(wizardResult);
@@ -791,8 +867,10 @@ export async function runWizard(outDir: string): Promise<void> {
       fs.appendFileSync(gitignorePath, "\n.env\n");
     }
 
-    printSuccess(`Config saved: ${yamlPath}`);
-    printSuccess(`Secrets saved: ${envPath}`);
+    printKeyValueBlock("Files written", [
+      { label: "Config", value: yamlPath },
+      { label: "Secrets", value: envPath },
+    ], "success");
 
     // Save agent credentials for resume
     saveAgent({
@@ -807,24 +885,21 @@ export async function runWizard(outDir: string): Promise<void> {
       maxDailyLlmCost,
       strategy: strategy.name,
       shadowMode,
+      behaviorRules,
       wallets: { solana: solAddr, base: baseAddr },
       createdAt: new Date().toISOString(),
     });
-    printSuccess(`Agent cached to ~/.balchemy/agent.json`);
+    printSuccess("Agent cached to ~/.balchemy/agent.json");
 
     // ── Done ──────────────────────────────────────────────────────────────
 
-    process.stdout.write(`
-  \x1b[1;32m━━━ Setup Complete ━━━\x1b[0m
-
-  Agent:    ${publicId}
-  Provider: ${provider.label}
-  Model:    ${model.label}
-  Mode:     LIVE
-
-  Starting agent...
-
-`);
+    printKeyValueBlock("Launch profile", [
+      { label: "Agent", value: publicId },
+      { label: "Provider", value: provider.label },
+      { label: "Model", value: model.label },
+      { label: "Mode", value: "LIVE" },
+    ], "success");
+    printInfo("Starting the live cockpit...\n");
 
     // Auto-start TUI — no extra step needed
     {
@@ -838,9 +913,11 @@ export async function runWizard(outDir: string): Promise<void> {
         llmModel: model.id,
         llmBaseUrl: provider.name !== "openai" && provider.name !== "anthropic" ? provider.baseUrl : llmBaseUrlOverride,
         maxDailyLlmCost,
+        behaviorRules,
         publicId,
         strategy: strategy.name,
         shadowMode,
+        autoSeedSubscriptions: true,
       });
     }
   } finally {

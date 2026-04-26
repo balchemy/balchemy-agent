@@ -2,14 +2,21 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { Select, TextInput } from "@inkjs/ui";
-import { execSync, execFileSync } from "node:child_process";
-import { createRequire } from "node:module";
 import { ChatPanel } from "./ChatPanel.js";
 import { StatusPanel } from "./StatusPanel.js";
 import { AgentBridge } from "./AgentBridge.js";
-import { clearAgent, loadAgent, saveAgent } from "../agent-store.js";
+import {
+  clearAgent,
+  loadAgent,
+  saveAgent,
+} from "../agent-store.js";
 import type { ChatMessage, StatusData, TuiConfig } from "./types.js";
 import { randomUUID } from "node:crypto";
+import { getSessionBadge } from "./status-view.js";
+import {
+  persistStrategyAndBuildRestartConfig,
+  toTuiConfig,
+} from "./session-sync.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -48,6 +55,45 @@ const SETTINGS_ITEMS: SettingItem[] = [
   { key: "strategy", label: "Strategy", source: "remote", type: "text" },
 ];
 
+type BadgeTone = "brand" | "live" | "warning" | "danger";
+
+function compactId(value: string, head = 10, tail = 5): string {
+  if (value.length <= head + tail + 1) return value;
+  return `${value.slice(0, head)}...${value.slice(-tail)}`;
+}
+
+function resolveProviderLabel(provider: string, baseUrl?: string): string {
+  if (provider === "anthropic") return "anthropic";
+  if (baseUrl?.includes("generativelanguage.googleapis.com")) return "gemini";
+  if (baseUrl?.includes("api.x.ai")) return "grok";
+  if (baseUrl?.includes("openrouter.ai")) return "openrouter";
+  return "openai";
+}
+
+function HeaderBadge({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: BadgeTone;
+}): React.ReactElement {
+  const styles: Record<BadgeTone, { backgroundColor: "cyan" | "green" | "yellow" | "red"; color: "black" | "white" }> = {
+    brand: { backgroundColor: "cyan", color: "black" },
+    live: { backgroundColor: "green", color: "black" },
+    warning: { backgroundColor: "yellow", color: "black" },
+    danger: { backgroundColor: "red", color: "white" },
+  };
+  const style = styles[tone];
+
+  return (
+    <Text backgroundColor={style.backgroundColor} color={style.color} bold>
+      {" "}
+      {label}
+      {" "}
+    </Text>
+  );
+}
+
 // ── App ──────────────────────────────────────────────────────────────────────
 
 interface AppProps {
@@ -58,6 +104,10 @@ export function App({ config }: AppProps): React.ReactElement {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const termWidth = stdout?.columns ?? 80;
+  const termHeight = stdout?.rows ?? 24;
+  const compactLayout = termWidth < 110;
+  const statusWidth = termWidth >= 148 ? 34 : termWidth >= 124 ? 30 : 28;
+  const chatPageSize = Math.max(8, termHeight - (compactLayout ? 18 : 16));
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<StatusData>({
     ...INITIAL_STATUS,
@@ -141,13 +191,8 @@ export function App({ config }: AppProps): React.ReactElement {
     }, 60_000);
 
     // Background update checker — every 10 minutes
-    const updateInterval = setInterval(() => {
-      void checkAndApplyUpdate(addSystemMsg, exit);
-    }, 10 * 60_000);
-
     return () => {
       clearInterval(balanceInterval);
-      clearInterval(updateInterval);
       bridge.stop().catch(() => {});
     };
   }, [config, addMessage, confirmTrade]);
@@ -251,7 +296,7 @@ export function App({ config }: AppProps): React.ReactElement {
       // Save provider + base URL, then ask for API key
       const agent = loadAgent();
       if (agent) {
-        agent.llmProvider = value;
+        agent.llmProvider = value === "anthropic" ? "anthropic" : "openai";
         // Set correct base URL for the provider
         const BASE_URLS: Record<string, string | undefined> = {
           openai: undefined, // default
@@ -300,19 +345,9 @@ export function App({ config }: AppProps): React.ReactElement {
       const updated = loadAgent();
       const bridge = bridgeRef.current;
       if (updated && bridge) {
-        void bridge.restart({
-          mcpEndpoint: updated.mcpEndpoint,
-          apiKey: updated.apiKey,
-          llmProvider: updated.llmProvider,
-          llmApiKey: updated.llmApiKey,
-          llmModel: updated.llmModel,
-          llmBaseUrl: updated.llmBaseUrl,
-          maxDailyLlmCost: updated.maxDailyLlmCost,
-          llmTimeoutMs: updated.llmTimeoutMs,
-          publicId: updated.publicId,
-          strategy: updated.strategy,
-          shadowMode: updated.shadowMode,
-        }).then(() => addSystemMsg("Reconnected with new provider."))
+        void bridge.restart(
+          toTuiConfig(updated, config.autoSeedSubscriptions ?? false)
+        ).then(() => addSystemMsg("Reconnected with new provider."))
           .catch(() => addErrorMsg("Reconnect failed. Restart CLI manually."));
       }
     }
@@ -362,19 +397,9 @@ export function App({ config }: AppProps): React.ReactElement {
       // Hot-reload: restart bridge with new config from disk
       const updated = loadAgent();
       if (updated && bridge) {
-        void bridge.restart({
-          mcpEndpoint: updated.mcpEndpoint,
-          apiKey: updated.apiKey,
-          llmProvider: updated.llmProvider,
-          llmApiKey: updated.llmApiKey,
-          llmModel: updated.llmModel,
-          llmBaseUrl: updated.llmBaseUrl,
-          maxDailyLlmCost: updated.maxDailyLlmCost,
-          llmTimeoutMs: updated.llmTimeoutMs,
-          publicId: updated.publicId,
-          strategy: updated.strategy,
-          shadowMode: updated.shadowMode,
-        }).then(() => addSystemMsg("Reconnected with new settings."))
+        void bridge.restart(
+          toTuiConfig(updated, config.autoSeedSubscriptions ?? false)
+        ).then(() => addSystemMsg("Reconnected with new settings."))
           .catch(() => addErrorMsg("Reconnect failed. Restart CLI manually."));
       }
     } else if (item.source === "remote" && bridge) {
@@ -394,8 +419,22 @@ export function App({ config }: AppProps): React.ReactElement {
       } else if (item.key === "strategy") {
         const ok = await bridge.updateStrategy(value);
         if (ok) {
+          const agent = loadAgent();
+          if (agent) {
+            const synced = persistStrategyAndBuildRestartConfig({
+              agent,
+              strategy: value,
+              saveAgent,
+              autoSeedSubscriptions: config.autoSeedSubscriptions ?? false,
+            });
+            void bridge.restart(synced.restartConfig)
+              .then(() => addSystemMsg("Reconnected with updated strategy."))
+              .catch(() => addErrorMsg("Reconnect failed. Restart CLI manually."));
+            addSystemMsg("Strategy updated. Reconnecting...");
+          } else {
+            addSystemMsg("Strategy updated.");
+          }
           vals.strategy = value;
-          addSystemMsg("Strategy updated.");
         } else {
           addErrorMsg("Failed to update strategy.");
         }
@@ -435,66 +474,113 @@ export function App({ config }: AppProps): React.ReactElement {
 
   const inSettings = appMode !== "chat";
   const chatInputActive = inputActive && !tradeConfirm && !inSettings;
+  const providerLabel = status.provider ?? resolveProviderLabel(config.llmProvider, config.llmBaseUrl);
+  const headerModel = status.model ?? config.llmModel ?? "default";
+  const headerSpend = `$${status.llmCostToday.toFixed(2)} / $${status.maxDailyLlmCost.toFixed(2)}`;
+  const sessionBadge = getSessionBadge(status);
+  const sessionTone: BadgeTone = sessionBadge.tone;
+  const statusTone: BadgeTone = status.status.includes("error")
+    ? "danger"
+    : status.status === "chat-ready"
+      ? "brand"
+      : status.sseConnected
+      ? "live"
+      : "warning";
 
   return (
     <Box flexDirection="column" height="100%">
       {/* Header */}
-      <Box paddingX={1} paddingY={0}>
-        <Text color="cyan" bold>{"\u25c8"} BALCHEMY</Text>
-        <Text dimColor> {"\u2502"} </Text>
-        <Text dimColor>{config.publicId.slice(0, 16)}</Text>
-        <Text dimColor> {"\u2502"} </Text>
-        <Text color={status.sseConnected ? "green" : "yellow"} bold>
-          {status.sseConnected ? "\u25cf LIVE" : "\u25cb CONNECTING"}
-        </Text>
-        {inSettings && (
-          <>
-            <Text dimColor> {"\u2502"} </Text>
-            <Text color="yellow" bold>{"\u2699"} SETTINGS</Text>
-          </>
+      <Box paddingX={1} paddingY={0} flexDirection="column">
+        <Box flexDirection={compactLayout ? "column" : "row"}>
+          <Box>
+            <HeaderBadge label="BALCHEMY" tone="brand" />
+            <Text color="white" bold> Agent Cockpit</Text>
+          </Box>
+          {!compactLayout && <Box flexGrow={1} />}
+          <Box marginTop={compactLayout ? 1 : 0}>
+            <HeaderBadge label={sessionBadge.label} tone={sessionTone} />
+            <Text> </Text>
+            <HeaderBadge label={status.status.toUpperCase()} tone={statusTone} />
+            {inSettings && (
+              <>
+                <Text> </Text>
+                <HeaderBadge label="SETTINGS" tone="warning" />
+              </>
+            )}
+          </Box>
+        </Box>
+        {compactLayout ? (
+          <Box marginTop={1} flexDirection="column">
+            <Text dimColor>{compactId(config.publicId, 12, 5)}</Text>
+            <Box>
+              <Text color="cyan">{providerLabel}</Text>
+              <Text dimColor> / </Text>
+              <Text color="white">{compactId(headerModel, 18, 6)}</Text>
+              <Text dimColor>  ·  LLM </Text>
+              <Text color="white">{headerSpend}</Text>
+            </Box>
+          </Box>
+        ) : (
+          <Box marginTop={1}>
+            <Text dimColor>{compactId(config.publicId, 12, 5)}</Text>
+            <Text dimColor>  ·  </Text>
+            <Text color="cyan">{providerLabel}</Text>
+            <Text dimColor> / </Text>
+            <Text color="white">{compactId(headerModel, 18, 6)}</Text>
+            <Text dimColor>  ·  LLM </Text>
+            <Text color="white">{headerSpend}</Text>
+          </Box>
         )}
-      </Box>
-      <Box>
-        <Text dimColor>{"\u2500".repeat(Math.max(termWidth - 4, 20))}</Text>
       </Box>
 
       {/* Main content */}
-      <Box flexDirection="row" flexGrow={1}>
-        <ChatPanel
-          messages={messages}
-          onSend={handleSend}
-          inputActive={chatInputActive}
-          inputPlaceholder="Send a message..."
-        />
-        <StatusPanel status={status} />
+      <Box flexDirection={compactLayout ? "column" : "row"} flexGrow={1} paddingX={1} gap={1}>
+        <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor="gray" paddingY={0}>
+          <Box paddingX={1}>
+            <Text color="white" bold>Activity</Text>
+            <Text dimColor>  chat, tool traces and live decisions</Text>
+          </Box>
+          <ChatPanel
+            messages={messages}
+            onSend={handleSend}
+            inputActive={chatInputActive}
+            hideInput={inSettings || Boolean(tradeConfirm)}
+            pageSize={chatPageSize}
+            inputPlaceholder="Ask, adjust rules, or inspect this session..."
+          />
+        </Box>
+        <StatusPanel status={status} width={statusWidth} compact={compactLayout} />
       </Box>
 
       {/* Settings panel — replaces input area when active */}
       {appMode === "settings-select" && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} flexDirection="column">
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1}>
           <Box marginBottom={0}>
-            <Text color="yellow" bold>Settings</Text>
-            {settingsLoading && <Text dimColor> loading...</Text>}
+            <Text color="white" bold>Session Settings</Text>
+            <Text dimColor>  provider, limits and strategy controls</Text>
+            {settingsLoading && <Text dimColor>  loading...</Text>}
           </Box>
           <Select options={settingsOptions} onChange={handleSettingSelected} />
-          <Text dimColor>{"\u2191\u2193"} navigate {"\u00b7"} enter select {"\u00b7"} esc close</Text>
+          <Text dimColor>Use arrows to move, Enter to edit, Esc to close.</Text>
         </Box>
       )}
 
       {appMode === "settings-edit-select" && editItem && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} flexDirection="column">
-          <Text color="yellow" bold>{editItem.label}</Text>
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1}>
+          <Text color="white" bold>{editItem.label}</Text>
+          <Text dimColor>Select a new value for this setting.</Text>
           <Select options={editSelectOptions} onChange={handleSelectValue} />
-          <Text dimColor>{"\u2191\u2193"} navigate {"\u00b7"} enter select {"\u00b7"} esc back</Text>
+          <Text dimColor>Use arrows to move, Enter to apply, Esc to go back.</Text>
         </Box>
       )}
 
       {appMode === "settings-edit-text" && editItem && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} flexDirection="column">
-          <Text color="yellow" bold>{editItem.label}</Text>
-          <Text dimColor>Current: {settingsValues[editItem.key] ?? "?"}</Text>
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1}>
+          <Text color="white" bold>{editItem.label}</Text>
+          <Text dimColor>Current value  {settingsValues[editItem.key] ?? "?"}</Text>
           <Box>
-            <Text color="yellow">{"\u276f"} </Text>
+            <Text color="yellow" bold>New</Text>
+            <Text dimColor>  </Text>
             <TextInput
               key={settingsInputKey}
               placeholder="Enter new value..."
@@ -505,11 +591,12 @@ export function App({ config }: AppProps): React.ReactElement {
       )}
 
       {appMode === "settings-edit-apikey" && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} flexDirection="column">
-          <Text color="yellow" bold>API Key for {pendingProvider}</Text>
-          <Text dimColor>Paste your API key (esc to skip)</Text>
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1}>
+          <Text color="white" bold>API Key for {pendingProvider}</Text>
+          <Text dimColor>Paste the new key below. Esc skips this step.</Text>
           <Box>
-            <Text color="yellow">{"\u276f"} </Text>
+            <Text color="yellow" bold>Key</Text>
+            <Text dimColor>  </Text>
             <TextInput
               key={settingsInputKey}
               placeholder="sk-... or key-..."
@@ -521,67 +608,47 @@ export function App({ config }: AppProps): React.ReactElement {
 
       {/* Trade confirmation overlay */}
       {tradeConfirm && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0}>
-          <Text color="yellow" bold>TRADE </Text>
-          <Text color="white">{tradeConfirm.preview} </Text>
-          <Text color="yellow">Confirm? </Text>
-          <TextInput
-            key={confirmKey}
-            placeholder="y/n"
-            onSubmit={handleConfirmInput}
-          />
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1}>
+          <Box marginBottom={1}>
+            <HeaderBadge label="TRADE CHECK" tone="warning" />
+            <Text dimColor>  review before live execution</Text>
+          </Box>
+          <Text color="white" wrap="wrap">{tradeConfirm.preview}</Text>
+          <Box marginTop={1}>
+            <Text color="yellow" bold>Approve</Text>
+            <Text dimColor>  type y or n</Text>
+          </Box>
+          <Box marginTop={1}>
+            <TextInput
+              key={confirmKey}
+              placeholder="y or n"
+              onSubmit={handleConfirmInput}
+            />
+          </Box>
         </Box>
       )}
 
       {/* Bottom shortcut bar */}
-      <Box paddingX={1} gap={1}>
-        <Text dimColor>{"\u2500".repeat(Math.max(termWidth - 4, 20))}</Text>
-      </Box>
-      <Box paddingX={1} gap={2}>
-        <Text><Text color="cyan" bold>^S</Text><Text dimColor> Settings</Text></Text>
-        <Text><Text color="cyan" bold>^L</Text><Text dimColor> Clear</Text></Text>
-        <Text><Text color="cyan" bold>^N</Text><Text dimColor> New</Text></Text>
-        <Text><Text color="cyan" bold>^Q</Text><Text dimColor> Quit</Text></Text>
-        {inSettings && <Text><Text color="yellow" bold>ESC</Text><Text dimColor> Back</Text></Text>}
+      <Box paddingX={1} marginTop={1}>
+        <Box borderStyle="round" borderColor="gray" paddingX={1} flexGrow={1}>
+          <Text dimColor>Commands  </Text>
+          <Text color="cyan" bold>^S</Text>
+          <Text dimColor> settings  </Text>
+          <Text color="cyan" bold>^L</Text>
+          <Text dimColor> clear  </Text>
+          <Text color="cyan" bold>^N</Text>
+          <Text dimColor> new  </Text>
+          <Text color="cyan" bold>^Q</Text>
+          <Text dimColor> quit</Text>
+          {inSettings && (
+            <>
+              <Text dimColor>  </Text>
+              <Text color="yellow" bold>ESC</Text>
+              <Text dimColor> back</Text>
+            </>
+          )}
+        </Box>
       </Box>
     </Box>
   );
-}
-
-// ── Background auto-update ────────────────────────────────────────────────
-
-async function checkAndApplyUpdate(
-  addSystemMsg: (text: string) => void,
-  exit: () => void,
-): Promise<void> {
-  try {
-    const res = await fetch("https://registry.npmjs.org/balchemy/latest", {
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return;
-    const data = (await res.json()) as { version?: string };
-    const latest = data.version;
-    if (!latest) return;
-
-    const require = createRequire(import.meta.url);
-    const pkg = require("../../package.json") as { version: string };
-    if (latest === pkg.version) return;
-
-    addSystemMsg(`Updating to v${latest}...`);
-    try {
-      execSync(`npm install -g balchemy@${latest}`, { stdio: "ignore", timeout: 30_000 });
-      addSystemMsg(`Updated to v${latest}. Restarting...`);
-      // Graceful restart: re-exec the CLI with same args
-      setTimeout(() => {
-        try {
-          execFileSync("balchemy", process.argv.slice(2), { stdio: "inherit" });
-        } catch { /* re-exec failed */ }
-        process.exit(0);
-      }, 500);
-    } catch {
-      // Silent — update failed, continue with current version
-    }
-  } catch {
-    // Silent — network error, skip this check
-  }
 }

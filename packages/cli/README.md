@@ -106,7 +106,6 @@ Plus 90+ internal tools for research, risk scoring, and execution — your LLM p
 | Google Vertex AI | `GOOGLE_APPLICATION_CREDENTIALS` | Gemini 3.1 Pro via Vertex AI |
 | xAI Grok | `GROK_API_KEY` | Grok-4-1-fast for research |
 | OpenRouter | `OPENROUTER_API_KEY` | Access to 100+ models |
-| Google Vertex AI | `GOOGLE_APPLICATION_CREDENTIALS` | Gemini 3.1 Pro via Vertex AI |
 
 ## Configuration
 

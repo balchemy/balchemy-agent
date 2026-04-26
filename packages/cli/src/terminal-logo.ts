@@ -22,25 +22,12 @@ const R  = "\x1b[0m";                  // reset
 
 // ── ANSI fallback logo ────────────────────────────────────────────────────────
 
-// Per-letter gradient colors matching the Balchemy brand logo
-// Generated via figlet -f small, then colorized per-letter
-const C1 = "\x1b[38;2;0;172;176m";    // B — teal
-const C2 = "\x1b[38;2;0;152;160m";    // A — teal-blue
-const C3 = "\x1b[38;2;180;100;140m";  // L — rose
-const C4 = "\x1b[38;2;186;155;6m";    // C — gold
-const C5 = "\x1b[38;2;0;160;170m";    // H — teal
-const C6 = "\x1b[38;2;80;130;200m";   // E — blue
-const C7 = "\x1b[38;2;170;90;150m";   // M — magenta
-const C8 = "\x1b[38;2;90;140;190m";   // Y — slate blue
-
 const D = "\x1b[38;5;245m"; // dim gray
 const ANSI_LOGO = [
   ``,
-  `  ${C1} ___ ${R}${C2}   _   ${R}${C3} _    ${R}${C4}  ___ ${R}${C5} _  _ ${R}${C6} ___ ${R}${C7} __  __ ${R}${C8}__   __${R}`,
-  `  ${C1}| _ )${R}${C2}  /_\\  ${R}${C3}| |   ${R}${C4} / __|${R}${C5}| || |${R}${C6}| __|${R}${C7}|  \\/  |${R}${C8}\\ \\ / /${R}`,
-  `  ${C1}| _ \\${R}${C2} / _ \\ ${R}${C3}| |__ ${R}${C4}| (__ ${R}${C5}| __ |${R}${C6}| _| ${R}${C7}| |\\/| |${R}${C8} \\ V / ${R}`,
-  `  ${C1}|___/${R}${C2}/_/ \\_\\${R}${C3}|____|${R}${C4} \\___|${R}${C5}|_||_|${R}${C6}|___|${R}${C7}|_|  |_|${R}${C8}  |_|  ${R}`,
-  `  ${D}${"─".repeat(52)}${R}`,
+  `  ${G}B${T}ALCHEMY${R}  ${D}AGENT CLI${R}`,
+  `  ${D}calm control for live autonomous trading${R}`,
+  `  ${DT}${"-".repeat(52)}${R}`,
   ``,
 ].join("\n");
 
@@ -133,6 +120,7 @@ function loadBundledImage(): BundledImage | null {
   const candidates = [
     path.join(__dirname_esm, "..", "assets", "bcrow.png"),
     path.join(__dirname_esm, "assets", "bcrow.png"),
+    path.join(process.cwd(), "balchemy", "assets", "bcrow.png"),
     path.join(process.cwd(), "create-balchemy-agent", "assets", "bcrow.png"),
   ];
 

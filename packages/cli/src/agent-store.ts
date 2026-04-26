@@ -34,9 +34,24 @@ export interface StoredAgent {
   llmTimeoutMs?: number;
   strategy: string;
   shadowMode: boolean;
+  behaviorRules?: Record<string, unknown>;
   wallets?: { solana?: string; base?: string };
   createdAt: string;
   name?: string;
+}
+
+export function withUpdatedAgentStrategy(
+  agent: StoredAgent,
+  strategy: string,
+): StoredAgent {
+  return {
+    ...agent,
+    strategy,
+    behaviorRules: {
+      ...(agent.behaviorRules ?? {}),
+      rules: strategy,
+    },
+  };
 }
 
 interface StoreData {

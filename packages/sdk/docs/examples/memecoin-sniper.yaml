@@ -1,0 +1,47 @@
+# Memecoin Sniper Strategy
+#
+# Buys newly launched memecoins on Solana within the first few minutes
+# of listing. Takes profit at 100% gain, cuts losses at 50% drop.
+# Positions are never held longer than 60 minutes.
+#
+# Risk profile: HIGH — many trades will lose, winners cover losers.
+# Recommended LLM: claude-haiku-4-5 (fast, cheap, sufficient for signal routing)
+
+mcp_endpoint: "${MCP_ENDPOINT}"
+api_key: "${BALCHEMY_API_KEY}"
+
+llm:
+  provider: anthropic
+  api_key: "${LLM_API_KEY}"
+  model: claude-haiku-4-5
+  max_daily_usd: 3              # Memecoin sniper fires frequently — keep budget low
+  timeout_ms: 5000              # Tight timeout — stale signals are worthless
+
+strategy: memecoin-sniper
+
+behavior_rules:
+  version: "1"
+  preset: memecoin-sniper
+
+  filters:
+    min_liquidity_usd: 10000      # Avoid rugpulls with thin liquidity
+    max_market_cap_usd: 5000000   # Only micro-caps — higher upside
+    require_verified_contract: false  # Most new launches are unverified
+    allowed_chains: [solana]
+
+  entry:
+    trigger: launch_signal         # React to new token launch events
+    max_position_usd: 25           # Small positions — many trades
+    slippage_bps: 400              # High slippage accepted for fast entry
+    min_confidence: 0.55           # Lower threshold — sniper takes more swings
+
+  exit:
+    take_profit_pct: 100           # Double or nothing
+    stop_loss_pct: 50              # Cut at -50%
+    max_hold_minutes: 60           # Force exit after 1 hour no matter what
+    trailing_stop_pct: 20          # Lock in gains if price reverses 20% from peak
+
+  risk:
+    max_single_trade_usd: 25
+    max_daily_loss_usd: 100        # Hard daily stop
+    max_open_positions: 3          # Never hold more than 3 memecoins at once

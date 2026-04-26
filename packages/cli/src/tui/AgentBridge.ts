@@ -4,6 +4,12 @@ import { AgentLoop, connectMcp } from "@balchemyai/agent-sdk";
 import type { AgentLoopConfig, BalchemyMcpClient } from "@balchemyai/agent-sdk";
 import type { ChatMessage, StatusData, TradeInfo, TuiConfig } from "./types.js";
 import { ChatAgent } from "./ChatAgent.js";
+import {
+  buildSetupRequiredMessage,
+  parseSetupStatusSnapshot,
+  type SetupStatusSnapshot,
+} from "./setup-guidance.js";
+import { buildStrategyUpdateArgs } from "./session-sync.js";
 import { loadAgent } from "../agent-store.js";
 
 /** Truncate verbose API errors (429 JSON blobs, stack traces) to a readable one-liner. */
@@ -39,6 +45,14 @@ function truncateError(raw: string): string {
   return clean;
 }
 
+function resolveProviderLabel(provider: string, baseUrl?: string): string {
+  if (provider === "anthropic") return "anthropic";
+  if (baseUrl?.includes("generativelanguage.googleapis.com")) return "gemini";
+  if (baseUrl?.includes("api.x.ai")) return "grok";
+  if (baseUrl?.includes("openrouter.ai")) return "openrouter";
+  return "openai";
+}
+
 type StateSetters = {
   addMessage: (msg: ChatMessage) => void;
   setStatus: (updater: (prev: StatusData) => StatusData) => void;
@@ -54,6 +68,7 @@ export class AgentBridge {
   private readonly replayFetch: typeof fetch;
   private lowBalanceWarned = false;
   private pendingLoopConfig: AgentLoopConfig | null = null;
+  private setupPollTimer: NodeJS.Timeout | null = null;
 
   constructor(config: TuiConfig, setters: StateSetters) {
     this.config = config;
@@ -94,7 +109,8 @@ export class AgentBridge {
     await this.chatAgent.init();
 
     // Check setup status
-    const setupComplete = await this.checkSetupStatus();
+    const setupStatus = await this.fetchSetupStatus();
+    const setupComplete = this.isSetupComplete(setupStatus);
 
     const loopConfig: AgentLoopConfig = {
       mcpEndpoint: this.config.mcpEndpoint,
@@ -106,6 +122,7 @@ export class AgentBridge {
       maxDailyLlmCost: this.config.maxDailyLlmCost ?? 5,
       llmTimeoutMs: this.config.llmTimeoutMs ?? 15_000,
       mcpFetchFn: this.replayFetch,
+      behaviorRules: this.config.behaviorRules,
 
       onEvent: (event) => {
         const data = event.data as Record<string, unknown> | undefined;
@@ -166,36 +183,52 @@ export class AgentBridge {
 
     // Only start AgentLoop if setup is complete
     if (setupComplete) {
+      this.setters.setStatus((prev) => ({ ...prev, status: "connecting" }));
+      await this.ensureDefaultSubscriptions();
       this.loop = new AgentLoop(loopConfig);
       await this.loop.start();
+    } else {
+      this.setters.setStatus((prev) => ({
+        ...prev,
+        sseConnected: false,
+        status: "setup-required",
+      }));
+      this.startSetupPolling();
     }
 
     // Push provider/model to status panel
     this.setters.setStatus((prev) => ({
       ...prev,
-      provider: this.config.llmProvider,
+      provider: resolveProviderLabel(this.config.llmProvider, this.config.llmBaseUrl),
       model: this.config.llmModel,
     }));
 
     // Input is ready now — kick off greeting + balance check in the background
-    void this.greet(setupComplete);
+    void this.greet(setupComplete, setupStatus);
   }
 
   /** Background greeting after start — does not block input activation. */
-  private async greet(setupComplete: boolean): Promise<void> {
+  private async greet(setupComplete: boolean, setupStatus: SetupStatusSnapshot | null): Promise<void> {
     if (!this.chatAgent) return;
 
     if (setupComplete) {
       await this.checkBalance();
     }
 
+    if (!setupComplete) {
+      this.addAgentMessage(buildSetupRequiredMessage(setupStatus ?? {}));
+      return;
+    }
+
     try {
-      const prompt = setupComplete
-        ? "Check my portfolio and status, then greet me. Tell me my balance, wallets, and current strategy. Keep it brief."
-        : "Agent setup is incomplete. Check setup status with setup_agent get_status, then guide me through the setup. Start by greeting me.";
+      const prompt = "Check my portfolio and status, then greet me. Tell me my balance, wallets, and current strategy. Keep it brief and do not narrate tool calls.";
       const reply = await this.chatAgent.chat(
         prompt,
-        (name, _result) => this.addSystemMessage(`Tool: ${name}`),
+        (name, _result) => {
+          if (name !== "setup_agent") {
+            this.addSystemMessage(`Tool: ${name}`);
+          }
+        },
       );
       this.addAgentMessage(reply);
     } catch (err: unknown) {
@@ -204,6 +237,10 @@ export class AgentBridge {
   }
 
   async stop(): Promise<void> {
+    if (this.setupPollTimer) {
+      clearInterval(this.setupPollTimer);
+      this.setupPollTimer = null;
+    }
     await this.loop?.stop();
     this.loop = null;
     this.chatAgent = null;
@@ -247,28 +284,85 @@ export class AgentBridge {
   /** Start AgentLoop if setup just completed during this session. */
   private async tryStartLoop(): Promise<void> {
     if (this.loop || !this.pendingLoopConfig) return;
-    const nowComplete = await this.checkSetupStatus();
+    const setupStatus = await this.fetchSetupStatus();
+    const nowComplete = this.isSetupComplete(setupStatus);
     if (nowComplete) {
+      await this.ensureDefaultSubscriptions();
       this.loop = new AgentLoop(this.pendingLoopConfig);
       await this.loop.start();
+      if (this.setupPollTimer) {
+        clearInterval(this.setupPollTimer);
+        this.setupPollTimer = null;
+      }
       this.addSystemMessage("Agent loop started — now listening for events.");
       this.setters.setStatus((prev) => ({ ...prev, sseConnected: true, status: "running" }));
       void this.checkBalance();
     }
   }
 
+  private startSetupPolling(): void {
+    if (this.setupPollTimer) return;
+    this.setupPollTimer = setInterval(() => {
+      void this.tryStartLoop();
+    }, 10_000);
+    this.setupPollTimer.unref();
+  }
+
+  private async ensureDefaultSubscriptions(): Promise<void> {
+    if (!this.config.autoSeedSubscriptions) {
+      return;
+    }
+
+    try {
+      const resp = await this.mcp.callTool('list_subscriptions', {});
+      const text = resp.content?.find((c: { type: string; text?: string }) => c.type === 'text')?.text ?? '{}';
+      let parsed: Record<string, unknown> = {};
+      try {
+        parsed = JSON.parse(text) as Record<string, unknown>;
+      } catch (_error: unknown) {
+        parsed = {};
+      }
+
+      const structured = parsed.structured as Record<string, unknown> | undefined;
+      const subscriptions = structured?.subscriptions;
+      if (Array.isArray(subscriptions) && subscriptions.length > 0) {
+        return;
+      }
+
+      const created = await this.mcp.callTool('create_subscription', {
+        type: 'new_token_launch',
+        chain: 'solana',
+        filter: { platform: 'pumpfun' },
+        format: 'summary',
+      });
+
+      if (!this.isToolError(created)) {
+        this.addSystemMessage('Default subscription enabled: Solana new token launches (Pump.fun).');
+        this.config.autoSeedSubscriptions = false;
+      } else {
+        this.addSystemMessage('Default subscription was not enabled automatically. Configure subscriptions manually if you want event-driven trading.');
+      }
+    } catch (_error: unknown) {
+      this.addSystemMessage('Default subscription setup was skipped. Configure subscriptions manually if you want autonomous event monitoring.');
+    }
+  }
+
   /** Check if setup is complete. Returns true if ready to trade, false if needs setup. */
-  private async checkSetupStatus(): Promise<boolean> {
+  private async fetchSetupStatus(): Promise<SetupStatusSnapshot | null> {
     try {
       const resp = await this.mcp.callTool("setup_agent", { action: "get_status" });
       const text = resp.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
       let parsed: Record<string, unknown>;
-      try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { parsed = {}; }
+      try { parsed = JSON.parse(text) as Record<string, unknown>; } catch (_error: unknown) { parsed = {}; }
       const structured = parsed.structured as Record<string, unknown> | undefined;
-      return structured?.tradingConfigured === true && structured?.walletsConfigured === true;
-    } catch {
-      return false;
+      return parseSetupStatusSnapshot(structured);
+    } catch (_error: unknown) {
+      return null;
     }
+  }
+
+  private isSetupComplete(status: SetupStatusSnapshot | null): boolean {
+    return status?.tradingConfigured === true && status?.walletsConfigured === true;
   }
 
   /** Silent balance refresh — updates status panel only, no chat messages. */
@@ -277,7 +371,7 @@ export class AgentBridge {
       const response = await this.mcp.agentPortfolio();
       const text = response.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
       let parsed: Record<string, unknown>;
-      try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { parsed = {}; }
+      try { parsed = JSON.parse(text) as Record<string, unknown>; } catch (_error: unknown) { parsed = {}; }
       const sol = Number(parsed.totalValueSol ?? 0);
       const usd = Number(parsed.totalValueUsd ?? 0);
       // Extract wallet addresses if present
@@ -296,7 +390,7 @@ export class AgentBridge {
         balanceUsd: usd,
         ...(wallets.length > 0 ? { wallets } : {}),
       }));
-    } catch {
+    } catch (_error: unknown) {
       // Silent — don't spam chat
     }
   }
@@ -306,7 +400,7 @@ export class AgentBridge {
       const response = await this.mcp.agentPortfolio();
       const text = response.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
       let parsed: Record<string, unknown>;
-      try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { parsed = {}; }
+      try { parsed = JSON.parse(text) as Record<string, unknown>; } catch (_error: unknown) { parsed = {}; }
       const sol = Number(parsed.totalValueSol ?? 0);
       const usd = Number(parsed.totalValueUsd ?? 0);
       this.setters.setStatus((prev) => ({ ...prev, balanceSol: sol, balanceUsd: usd }));
@@ -317,7 +411,7 @@ export class AgentBridge {
       if (sol >= 0.01) {
         this.lowBalanceWarned = false;
       }
-    } catch {
+    } catch (_error: unknown) {
       this.addErrorMessage("Could not check wallet balance.");
     }
   }
@@ -333,7 +427,7 @@ export class AgentBridge {
       const resp = await this.mcp.callTool("get_behavior_rules", {});
       const text = resp.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
       let parsed: Record<string, unknown>;
-      try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { parsed = {}; }
+      try { parsed = JSON.parse(text) as Record<string, unknown>; } catch (_error: unknown) { parsed = {}; }
       const structured = parsed.structured as Record<string, unknown> | undefined;
       const rules = structured ?? parsed;
 
@@ -347,17 +441,17 @@ export class AgentBridge {
       } else if (typeof rules.preset === "string") {
         result.strategy = `preset: ${rules.preset}`;
       }
-    } catch {
+    } catch (_error: unknown) {
       // Fallback: try setup_agent get_status for boolean flags
       try {
         const resp = await this.mcp.callTool("setup_agent", { action: "get_status" });
         const text = resp.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
         let parsed: Record<string, unknown>;
-        try { parsed = JSON.parse(text) as Record<string, unknown>; } catch { parsed = {}; }
+        try { parsed = JSON.parse(text) as Record<string, unknown>; } catch (_innerError: unknown) { parsed = {}; }
         const structured = parsed.structured as Record<string, unknown> | undefined;
         if (structured?.slippageConfigured) result.slippageBps = result.slippageBps ?? undefined;
         if (structured?.strategyConfigured) result.strategy = result.strategy ?? "configured";
-      } catch {
+      } catch (_innerError: unknown) {
         // Silent
       }
     }
@@ -370,7 +464,7 @@ export class AgentBridge {
     try {
       const resp = await this.mcp.callTool("setup_agent", { action: "configure_slippage", slippageBps: bps });
       return !this.isToolError(resp);
-    } catch {
+    } catch (_error: unknown) {
       return false;
     }
   }
@@ -379,12 +473,10 @@ export class AgentBridge {
   async updateStrategy(rules: string): Promise<boolean> {
     try {
       const resp = await this.mcp.callTool("setup_agent", {
-        action: "configure_autonomous",
-        naturalLanguageRules: rules,
-        shadowMode: false,
+        ...buildStrategyUpdateArgs(rules, this.config.shadowMode),
       });
       return !this.isToolError(resp);
-    } catch {
+    } catch (_error: unknown) {
       return false;
     }
   }
@@ -397,7 +489,7 @@ export class AgentBridge {
       if (parsed.ok === false) return true;
       const structured = parsed.structured as Record<string, unknown> | undefined;
       if (structured?.error) return true;
-    } catch { /* not JSON */ }
+    } catch (_error: unknown) { /* not JSON */ }
     return false;
   }
 
@@ -406,13 +498,13 @@ export class AgentBridge {
     const saved = loadAgent();
     if (saved) {
       return {
-        provider: saved.llmProvider ?? this.config.llmProvider,
+        provider: resolveProviderLabel(saved.llmProvider ?? this.config.llmProvider, saved.llmBaseUrl ?? this.config.llmBaseUrl),
         model: saved.llmModel ?? this.config.llmModel ?? "(default)",
         maxDailyCost: saved.maxDailyLlmCost ?? this.config.maxDailyLlmCost ?? 5,
       };
     }
     return {
-      provider: this.config.llmProvider,
+      provider: resolveProviderLabel(this.config.llmProvider, this.config.llmBaseUrl),
       model: this.config.llmModel ?? "(default)",
       maxDailyCost: this.config.maxDailyLlmCost ?? 5,
     };

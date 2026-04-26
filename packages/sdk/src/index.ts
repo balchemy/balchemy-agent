@@ -64,12 +64,15 @@ export { DecisionHandler } from './agent-loop/decision-handler';
 export { WebhookReceiver } from './agent-loop/webhook-receiver';
 export { OpenAiAdapter } from './agent-loop/llm-adapters/openai';
 export { AnthropicAdapter } from './agent-loop/llm-adapters/anthropic';
+export { checkTradeAmount, checkTradeRate, checkAllRules } from './agent-loop/rule-checker';
+export type { RuleCheckResult } from './agent-loop/rule-checker';
 export type {
   AgentLoopConfig,
   AgentStatus,
   AgentLoopStatus,
   AgentEvent,
   AgentDecision,
+  BehaviorRuleLimits,
   LlmAdapter,
   LlmMessage,
   LlmResponse,

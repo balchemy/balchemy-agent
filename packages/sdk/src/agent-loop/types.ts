@@ -55,6 +55,10 @@ export interface AgentLoopConfig {
   webhookSecret?: string;
   /** Custom fetch function for MCP requests (e.g., to inject replay protection headers). */
   mcpFetchFn?: typeof fetch;
+  /** Optional SDK version override sent with telemetry ingestion batches. */
+  sdkVersion?: string;
+  /** Optional CLI version sent with telemetry ingestion batches. */
+  cliVersion?: string;
   /** LLM call timeout in ms. Default: 10000 */
   llmTimeoutMs?: number;
   /** Max consecutive LLM failures before pausing. Default: 3 */
@@ -126,6 +130,12 @@ export interface AgentStatus {
   lastTradeAt?: number;
   sseConnected: boolean;
   webhookActive: boolean;
+}
+
+/** Hard limits extracted from behaviorRules for client-side pre-check. */
+export interface BehaviorRuleLimits {
+  maxTradeSol?: number;
+  maxTradesPerHour?: number;
 }
 
 export const DEFAULT_AGENT_LOOP_CONFIG = {

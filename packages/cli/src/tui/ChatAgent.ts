@@ -58,6 +58,7 @@ export class ChatAgent {
   private tools: ToolDef[] = [];
   private history: ConversationMessage[] = [];
   private readonly replayFetch: typeof fetch;
+  private chatQueue: Promise<void> = Promise.resolve();
 
   constructor(config: ChatAgentConfig, mcp: BalchemyMcpClient, replayFetch: typeof fetch) {
     this.config = config;
@@ -103,6 +104,26 @@ export class ChatAgent {
    *   for user confirmation. Return true to proceed, false to cancel.
    */
   async chat(
+    userMessage: string,
+    onToolCall?: (name: string, result: string) => void,
+    confirmTrade?: (preview: string, args: Record<string, unknown>) => Promise<boolean>,
+  ): Promise<string> {
+    return this.enqueueChat(() => this.runChat(userMessage, onToolCall, confirmTrade));
+  }
+
+  private enqueueChat<T>(run: () => Promise<T>): Promise<T> {
+    const previous = this.chatQueue;
+    let release: (() => void) | undefined;
+    this.chatQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    return previous
+      .then(run, run)
+      .finally(() => release?.());
+  }
+
+  private async runChat(
     userMessage: string,
     onToolCall?: (name: string, result: string) => void,
     confirmTrade?: (preview: string, args: Record<string, unknown>) => Promise<boolean>,
@@ -391,7 +412,7 @@ You have access to MCP tools via tool calling. Always call tools when you need t
 When setup is incomplete (check with setup_agent action="get_status"), follow these steps IN ORDER. Do NOT skip steps. Ask the user questions between steps.
 
 ### Step 1: Bind developer wallet
-- Ask the user: "What is your EVM wallet address? This will be your recovery wallet."
+- Ask the user: "What is your EVM wallet address? This will be your developer wallet."
 - Wait for their answer. They must give you a 0x... address.
 - Call: setup_agent { action: "bind_developer_wallet", walletAddress: "<their address>", walletAddressConfirm: "<their address>" }
 - Tell them their master key from the response — this is critical, they must save it.

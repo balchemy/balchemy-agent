@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * create-balchemy-agent CLI entry point.
+ * balchemy CLI entry point.
  *
  * On launch:
  *   - If ~/.balchemy/agent.json exists → offer to resume or start fresh
@@ -25,10 +25,19 @@ const W = "\x1b[1;37m";
 const D = "\x1b[38;5;245m";
 const R = "\x1b[0m";
 
+function printSummaryBlock(title: string, rows: Array<{ label: string; value: string }>): void {
+  const maxLabel = rows.reduce((acc, row) => Math.max(acc, row.label.length), 0);
+  process.stdout.write(`  ${T}${title}${R}\n`);
+  for (const row of rows) {
+    process.stdout.write(`  ${D}${row.label.padEnd(maxLabel)}${R}  ${row.value}\n`);
+  }
+  process.stdout.write(`  ${D}${"-".repeat(54)}${R}\n`);
+}
+
 function ask(rl: readline.Interface, question: string, defaultVal = ""): Promise<string> {
   return new Promise((resolve) => {
     const hint = defaultVal ? ` ${D}[${defaultVal}]${R}` : "";
-    rl.question(`  ${question}${hint}: `, (answer) => {
+    rl.question(`  ${T}${question}${R}${hint}: `, (answer) => {
       resolve(answer.trim() || defaultVal);
     });
   });
@@ -133,6 +142,8 @@ async function main(): Promise<void> {
         publicId,
         strategy: "custom",
         shadowMode: false,
+        behaviorRules: config.behaviorRules,
+        autoSeedSubscriptions: false,
       });
       break;
     }
@@ -153,14 +164,22 @@ async function main(): Promise<void> {
         // Show cached agent info and ask what to do
         const { renderLogo } = await import("./terminal-logo.js");
         process.stdout.write(renderLogo(20));
-        process.stdout.write(`\n  ${G}B${T}alchemy ${W}Agent${R}\n\n`);
-        process.stdout.write(`  ${D}Cached agent found:${R}\n`);
-        process.stdout.write(`  ${T}Agent:${R}    ${cached.publicId}\n`);
-        process.stdout.write(`  ${T}Endpoint:${R} ${cached.mcpEndpoint}\n`);
-        process.stdout.write(`  ${T}Model:${R}    ${cached.llmModel ?? "default"}\n`);
-        process.stdout.write(`  ${T}Strategy:${R} ${cached.strategy}\n`);
-        process.stdout.write(`  ${T}Mode:${R}     ${cached.shadowMode ? "Shadow" : "LIVE"}\n`);
-        process.stdout.write(`  ${D}Saved:${R}    ${cached.createdAt}\n\n`);
+        process.stdout.write(`\n  ${G}B${T}alchemy ${W}Agent${R}\n`);
+        process.stdout.write(`  ${D}Saved session ready to resume${R}\n\n`);
+        printSummaryBlock("Saved session", [
+          { label: "Agent", value: cached.publicId },
+          { label: "Endpoint", value: cached.mcpEndpoint },
+          { label: "Model", value: cached.llmModel ?? "default" },
+          { label: "Strategy", value: cached.strategy },
+          { label: "Mode", value: cached.shadowMode ? "Shadow" : "LIVE" },
+          { label: "Saved", value: cached.createdAt },
+        ]);
+        printSummaryBlock("Available actions", [
+          { label: "y", value: "Resume this saved session" },
+          { label: "n", value: "Keep the cache and open setup again" },
+          { label: "new", value: "Clear saved state and start fresh" },
+        ]);
+        process.stdout.write("\n");
 
         const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
         const choice = await ask(rl, `${W}Resume this agent?${R} (y/n/new)`, "y");
@@ -181,6 +200,8 @@ async function main(): Promise<void> {
             publicId: cached.publicId,
             strategy: cached.strategy,
             shadowMode: cached.shadowMode,
+            behaviorRules: cached.behaviorRules,
+            autoSeedSubscriptions: false,
           });
         } else if (choice === "new" || choice === "n") {
           // New agent — clear cache and run wizard
@@ -197,14 +218,14 @@ async function main(): Promise<void> {
     }
 
     default: {
-      process.stdout.write(
-        `${T}Balchemy Agent CLI${R}\n\n` +
-          "Usage:\n" +
-          "  npx create-balchemy-agent         Resume agent or setup wizard\n" +
-          "  npx create-balchemy-agent init     Force new setup wizard\n" +
-          "  balchemy-agent start [config]      Start from config file\n" +
-          "  balchemy-agent docker [outDir]     Generate Docker files\n\n",
-      );
+      process.stdout.write(`${T}Balchemy Agent CLI${R}\n\n`);
+      printSummaryBlock("Commands", [
+        { label: "balchemy", value: "Resume agent or run setup" },
+        { label: "balchemy init", value: "Force a fresh setup wizard" },
+        { label: "balchemy start [config]", value: "Start from an existing config file" },
+        { label: "balchemy docker [outDir]", value: "Generate Docker files for deployment" },
+      ]);
+      process.stdout.write("\n");
       break;
     }
   }
