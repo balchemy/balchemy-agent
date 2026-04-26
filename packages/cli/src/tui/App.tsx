@@ -107,7 +107,6 @@ export function App({ config }: AppProps): React.ReactElement {
   const termHeight = stdout?.rows ?? 24;
   const compactLayout = termWidth < 110;
   const statusWidth = termWidth >= 148 ? 34 : termWidth >= 124 ? 30 : 28;
-  const chatPageSize = Math.max(8, termHeight - (compactLayout ? 18 : 16));
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<StatusData>({
     ...INITIAL_STATUS,
@@ -405,8 +404,8 @@ export function App({ config }: AppProps): React.ReactElement {
     } else if (item.source === "remote" && bridge) {
       if (item.key === "slippage") {
         const bps = parseInt(value, 10);
-        if (isNaN(bps) || bps < 1 || bps > 5000) {
-          addErrorMsg("Slippage must be 1-5000 bps.");
+        if (isNaN(bps) || bps < 10 || bps > 500) {
+          addErrorMsg("Slippage must be 10-500 bps.");
           return;
         }
         const ok = await bridge.updateSlippage(bps);
@@ -486,6 +485,11 @@ export function App({ config }: AppProps): React.ReactElement {
       : status.sseConnected
       ? "live"
       : "warning";
+  const overlayHeight = inSettings || tradeConfirm ? 7 : 0;
+  const mainHeight = Math.max(compactLayout ? 12 : 14, termHeight - (compactLayout ? 10 : 8) - overlayHeight);
+  const statusPanelHeight = compactLayout ? Math.min(10, Math.max(7, Math.floor(mainHeight * 0.4))) : mainHeight;
+  const activityHeight = compactLayout ? Math.max(6, mainHeight - statusPanelHeight - 1) : mainHeight;
+  const chatPageSize = Math.max(3, activityHeight - 5);
 
   return (
     <Box flexDirection="column" height="100%">
@@ -534,8 +538,8 @@ export function App({ config }: AppProps): React.ReactElement {
       </Box>
 
       {/* Main content */}
-      <Box flexDirection={compactLayout ? "column" : "row"} flexGrow={1} paddingX={1} gap={1}>
-        <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor="gray" paddingY={0}>
+      <Box flexDirection={compactLayout ? "column" : "row"} height={mainHeight} paddingX={1} gap={1}>
+        <Box flexDirection="column" flexGrow={compactLayout ? 0 : 1} height={activityHeight} borderStyle="round" borderColor="gray" paddingY={0}>
           <Box paddingX={1}>
             <Text color="white" bold>Activity</Text>
             <Text dimColor>  chat, tool traces and live decisions</Text>
@@ -549,7 +553,7 @@ export function App({ config }: AppProps): React.ReactElement {
             inputPlaceholder="Ask, adjust rules, or inspect this session..."
           />
         </Box>
-        <StatusPanel status={status} width={statusWidth} compact={compactLayout} />
+        <StatusPanel status={status} width={statusWidth} compact={compactLayout} height={statusPanelHeight} />
       </Box>
 
       {/* Settings panel — replaces input area when active */}

@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { AgentLoop, connectMcp } from "@balchemyai/agent-sdk";
 import type { AgentLoopConfig, BalchemyMcpClient } from "@balchemyai/agent-sdk";
-import type { ChatMessage, StatusData, TradeInfo, TuiConfig } from "./types.js";
+import type { ChatMessage, StatusData, TradeInfo, TuiConfig, WalletInfo } from "./types.js";
 import { ChatAgent } from "./ChatAgent.js";
 import {
   buildSetupRequiredMessage,
@@ -51,6 +51,150 @@ function resolveProviderLabel(provider: string, baseUrl?: string): string {
   if (baseUrl?.includes("api.x.ai")) return "grok";
   if (baseUrl?.includes("openrouter.ai")) return "openrouter";
   return "openai";
+}
+
+function parseJsonObject(text: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch (_error: unknown) {
+    return null;
+  }
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function firstNumber(source: Record<string, unknown>, keys: string[]): number | undefined {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return undefined;
+}
+
+function normalizeChain(value: unknown): WalletInfo["chain"] | null {
+  const raw = String(value ?? "").toLowerCase();
+  if (raw === "sol" || raw === "solana") return "solana";
+  if (raw === "base" || raw === "evm" || raw === "8453") return "base";
+  return null;
+}
+
+function readWallet(value: unknown): WalletInfo | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const address = String(record.address ?? record.walletAddress ?? record.publicKey ?? "");
+  const chain = normalizeChain(record.chain ?? record.network ?? record.chainId);
+  if (!address || !chain) return null;
+  return { chain, address };
+}
+
+function mergeWallets(...groups: WalletInfo[][]): WalletInfo[] {
+  const wallets: WalletInfo[] = [];
+  for (const group of groups) {
+    for (const wallet of group) {
+      if (!wallets.some((existing) => existing.chain === wallet.chain && existing.address === wallet.address)) {
+        wallets.push(wallet);
+      }
+    }
+  }
+  return wallets;
+}
+
+function readRecords(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const record = asRecord(item);
+    return record ? [record] : [];
+  });
+}
+
+function collectWallets(source: Record<string, unknown>): WalletInfo[] {
+  const wallets: WalletInfo[] = [];
+  const push = (wallet: WalletInfo | null): void => {
+    if (!wallet) return;
+    if (!wallets.some((existing) => existing.chain === wallet.chain && existing.address === wallet.address)) {
+      wallets.push(wallet);
+    }
+  };
+
+  for (const key of ["wallets", "tradingWallets", "custodialWallets", "walletBalances"]) {
+    const value = source[key];
+    if (Array.isArray(value)) {
+      for (const item of value) push(readWallet(item));
+    } else {
+      const record = asRecord(value);
+      if (record) {
+        for (const [chain, addressOrWallet] of Object.entries(record)) {
+          const normalized = normalizeChain(chain);
+          if (typeof addressOrWallet === "string") {
+            if (normalized) push({ chain: normalized, address: addressOrWallet });
+          } else {
+            push(readWallet({ ...(asRecord(addressOrWallet) ?? {}), chain }));
+          }
+        }
+      }
+    }
+  }
+
+  const solanaAddress = source.solanaWalletAddress ?? source.solanaWallet ?? source.solWallet;
+  if (typeof solanaAddress === "string") push({ chain: "solana", address: solanaAddress });
+  const baseAddress = source.baseWalletAddress ?? source.baseWallet ?? source.evmWallet;
+  if (typeof baseAddress === "string") push({ chain: "base", address: baseAddress });
+
+  return wallets;
+}
+
+function sumWalletBalances(source: Record<string, unknown>): { balanceSol?: number; balanceUsd?: number } {
+  const balances = readRecords(source.walletBalances);
+  let balanceSol = 0;
+  let hasSol = false;
+  let balanceUsd = 0;
+  let hasUsd = false;
+
+  for (const balance of balances) {
+    const baseSymbol = String(balance.baseSymbol ?? balance.symbol ?? "").toUpperCase();
+    const stableSymbol = String(balance.stableSymbol ?? "").toUpperCase();
+    const baseBalance = firstNumber(balance, ["baseBalance", "nativeBalance", "balance"]);
+    const stableBalance = firstNumber(balance, ["stableBalance", "usdcBalance"]);
+    const valueUsd = firstNumber(balance, ["valueUsd", "value_usd", "usdValue"]);
+
+    if ((baseSymbol === "SOL" || balance.chain === "solana") && baseBalance !== undefined) {
+      balanceSol += baseBalance;
+      hasSol = true;
+    }
+    if ((stableSymbol === "USDC" || stableSymbol === "USD") && stableBalance !== undefined) {
+      balanceUsd += stableBalance;
+      hasUsd = true;
+    } else if (valueUsd !== undefined) {
+      balanceUsd += valueUsd;
+      hasUsd = true;
+    }
+  }
+
+  return {
+    ...(hasSol ? { balanceSol } : {}),
+    ...(hasUsd ? { balanceUsd } : {}),
+  };
+}
+
+function collectPositions(source: Record<string, unknown>): TradeInfo[] | null {
+  if (!Array.isArray(source.positions)) return null;
+  return readRecords(source.positions).flatMap((position) => {
+    const token = String(position.tokenMint ?? position.tokenAddress ?? position.tokenSymbol ?? "");
+    if (!token) return [];
+    const amount = String(position.netAmount ?? position.amount ?? position.balance ?? "?");
+    return [{ token, action: "buy" as const, amount, timestamp: Date.now() }];
+  });
 }
 
 type StateSetters = {
@@ -219,7 +363,8 @@ export class AgentBridge {
       try {
         const reply = await this.chatAgent.chat(
           "Start my Balchemy setup. First call setup_agent get_status, then ask me only the next required setup question.",
-          (name, _result) => {
+          (name, result) => {
+            this.applyToolResult(name, result);
             if (name !== "setup_agent") {
               this.addSystemMessage(`Tool: ${name}`);
             }
@@ -237,7 +382,8 @@ export class AgentBridge {
       const prompt = "Check my portfolio and status, then greet me. Tell me my balance, wallets, and current strategy. Keep it brief and do not narrate tool calls.";
       const reply = await this.chatAgent.chat(
         prompt,
-        (name, _result) => {
+        (name, result) => {
+          this.applyToolResult(name, result);
           if (name !== "setup_agent") {
             this.addSystemMessage(`Tool: ${name}`);
           }
@@ -282,7 +428,10 @@ export class AgentBridge {
     try {
       const reply = await this.chatAgent.chat(
         text,
-        (name, _result) => this.addSystemMessage(`Tool: ${name}`),
+        (name, result) => {
+          this.applyToolResult(name, result);
+          this.addSystemMessage(`Tool: ${name}`);
+        },
         (preview) => this.setters.confirmTrade(preview),
       );
       this.addAgentMessage(reply);
@@ -319,6 +468,57 @@ export class AgentBridge {
       void this.tryStartLoop();
     }, 10_000);
     this.setupPollTimer.unref();
+  }
+
+  private applyToolResult(name: string, resultText: string): void {
+    const parsed = parseJsonObject(resultText);
+    if (!parsed) return;
+
+    if (name === "setup_agent") {
+      const structured = asRecord(parsed.structured) ?? parsed;
+      if (structured.action === "create_wallet") {
+        const chain = normalizeChain(structured.chain);
+        const address = typeof structured.address === "string" ? structured.address : undefined;
+        if (chain && address) {
+          this.upsertWallet({ chain, address });
+        }
+      }
+      return;
+    }
+
+    if (name === "agent_portfolio") {
+      this.applyPortfolioSnapshot(parsed);
+    }
+  }
+
+  private applyPortfolioSnapshot(parsed: Record<string, unknown>): void {
+    const structured = asRecord(parsed.structured);
+    const snapshot = asRecord(structured?.snapshot) ?? asRecord(parsed.snapshot) ?? parsed;
+    const data = asRecord(snapshot.data);
+    const wallets = mergeWallets(collectWallets(snapshot), data ? collectWallets(data) : []);
+    const summed = data ? sumWalletBalances(data) : sumWalletBalances(snapshot);
+    const balanceSol = firstNumber(snapshot, ["totalValueSol", "portfolioValueSol", "portfolio_value_sol", "total_value_sol"])
+      ?? (data ? firstNumber(data, ["totalValueSol", "portfolioValueSol", "portfolio_value_sol", "total_value_sol"]) : undefined)
+      ?? summed.balanceSol;
+    const balanceUsd = firstNumber(snapshot, ["totalValueUsd", "portfolioValueUsd", "portfolio_value_usd", "total_value_usd", "valueUsd"])
+      ?? (data ? firstNumber(data, ["totalValueUsd", "portfolioValueUsd", "portfolio_value_usd", "total_value_usd", "valueUsd"]) : undefined)
+      ?? summed.balanceUsd;
+    const positions = collectPositions(data ?? snapshot);
+
+    this.setters.setStatus((prev) => ({
+      ...prev,
+      ...(balanceSol !== undefined ? { balanceSol } : {}),
+      ...(balanceUsd !== undefined ? { balanceUsd } : {}),
+      ...(wallets.length > 0 ? { wallets } : {}),
+      ...(positions ? { activeTrades: positions } : {}),
+    }));
+  }
+
+  private upsertWallet(wallet: WalletInfo): void {
+    this.setters.setStatus((prev) => {
+      const wallets = prev.wallets.filter((existing) => existing.chain !== wallet.chain);
+      return { ...prev, wallets: [...wallets, wallet] };
+    });
   }
 
   private async ensureDefaultSubscriptions(): Promise<void> {
@@ -383,26 +583,8 @@ export class AgentBridge {
     try {
       const response = await this.mcp.agentPortfolio();
       const text = response.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
-      let parsed: Record<string, unknown>;
-      try { parsed = JSON.parse(text) as Record<string, unknown>; } catch (_error: unknown) { parsed = {}; }
-      const sol = Number(parsed.totalValueSol ?? 0);
-      const usd = Number(parsed.totalValueUsd ?? 0);
-      // Extract wallet addresses if present
-      const wallets: Array<{ chain: "solana" | "base"; address: string }> = [];
-      const walletsArr = parsed.wallets as Array<Record<string, unknown>> | undefined;
-      if (Array.isArray(walletsArr)) {
-        for (const w of walletsArr) {
-          if (w.chain && w.address) {
-            wallets.push({ chain: w.chain as "solana" | "base", address: String(w.address) });
-          }
-        }
-      }
-      this.setters.setStatus((prev) => ({
-        ...prev,
-        balanceSol: sol,
-        balanceUsd: usd,
-        ...(wallets.length > 0 ? { wallets } : {}),
-      }));
+      const parsed = parseJsonObject(text);
+      if (parsed) this.applyPortfolioSnapshot(parsed);
     } catch (_error: unknown) {
       // Silent — don't spam chat
     }
@@ -412,14 +594,19 @@ export class AgentBridge {
     try {
       const response = await this.mcp.agentPortfolio();
       const text = response.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
-      let parsed: Record<string, unknown>;
-      try { parsed = JSON.parse(text) as Record<string, unknown>; } catch (_error: unknown) { parsed = {}; }
-      const sol = Number(parsed.totalValueSol ?? 0);
-      const usd = Number(parsed.totalValueUsd ?? 0);
-      this.setters.setStatus((prev) => ({ ...prev, balanceSol: sol, balanceUsd: usd }));
+      const parsed = parseJsonObject(text);
+      const snapshot = parsed
+        ? asRecord(asRecord(parsed.structured)?.snapshot) ?? asRecord(parsed.snapshot) ?? parsed
+        : {};
+      const data = asRecord(snapshot.data);
+      const sol = firstNumber(snapshot, ["totalValueSol", "portfolioValueSol", "portfolio_value_sol", "total_value_sol"])
+        ?? (data ? firstNumber(data, ["totalValueSol", "portfolioValueSol", "portfolio_value_sol", "total_value_sol"]) : undefined)
+        ?? (data ? sumWalletBalances(data).balanceSol : sumWalletBalances(snapshot).balanceSol)
+        ?? 0;
+      if (parsed) this.applyPortfolioSnapshot(parsed);
       if (sol < 0.01 && !this.lowBalanceWarned) {
         this.lowBalanceWarned = true;
-        this.addErrorMessage(`Wallet balance too low (${sol} SOL). Fund your Solana wallet to start trading.`);
+        this.addErrorMessage(`Wallet balance looks low (${sol} SOL). Fund the selected trading wallet before live execution.`);
       }
       if (sol >= 0.01) {
         this.lowBalanceWarned = false;
