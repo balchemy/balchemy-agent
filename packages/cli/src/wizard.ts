@@ -745,7 +745,7 @@ export async function runWizard(outDir: string): Promise<void> {
       wallets: {},
       createdAt: new Date().toISOString(),
     });
-    printSuccess("Agent cached to ~/.balchemy/agent.json");
+    printSuccess("Agent cached to ~/.balchemy/agents.enc");
 
     // ── Done ──────────────────────────────────────────────────────────────
 

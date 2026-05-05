@@ -3,8 +3,8 @@
  * balchemy CLI entry point.
  *
  * On launch:
- *   - If ~/.balchemy/agent.json exists → offer to resume or start fresh
- *   - If no cached agent → run wizard
+ *   - If ~/.balchemy/agents.enc has saved agents → offer resume, choose, or create/connect
+ *   - If no saved agent → run wizard
  *
  * Sub-commands:
  *   (no args)       Resume cached agent or run wizard
@@ -15,7 +15,12 @@
 
 import * as path from "path";
 import * as readline from "readline";
-import { loadAgent, clearAgent, getStorePath } from "./agent-store.js";
+import {
+  loadAgent,
+  listAgents,
+  setActiveAgent,
+  type StoredAgent,
+} from "./agent-store.js";
 
 const [, , cmd, ...args] = process.argv;
 
@@ -43,6 +48,83 @@ function ask(rl: readline.Interface, question: string, defaultVal = ""): Promise
   });
 }
 
+function compactValue(value: string, head = 28, tail = 8): string {
+  if (value.length <= head + tail + 3) return value;
+  return `${value.slice(0, head)}...${value.slice(-tail)}`;
+}
+
+function normalizeChoice(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function mostRecentAgent(agents: StoredAgent[]): StoredAgent | null {
+  if (agents.length === 0) return null;
+  return [...agents].sort((a, b) => {
+    const aTime = Date.parse(a.createdAt);
+    const bTime = Date.parse(b.createdAt);
+    return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
+  })[0] ?? null;
+}
+
+async function startSavedAgent(agent: StoredAgent): Promise<void> {
+  setActiveAgent(agent.publicId);
+  const { startTui } = await import("./tui/start.js");
+  await startTui({
+    mcpEndpoint: agent.mcpEndpoint,
+    apiKey: agent.apiKey,
+    llmProvider: agent.llmProvider,
+    llmApiKey: agent.llmApiKey,
+    llmModel: agent.llmModel,
+    llmBaseUrl: agent.llmBaseUrl,
+    maxDailyLlmCost: agent.maxDailyLlmCost,
+    llmTimeoutMs: agent.llmTimeoutMs,
+    publicId: agent.publicId,
+    strategy: agent.strategy,
+    shadowMode: agent.shadowMode,
+    behaviorRules: agent.behaviorRules,
+    autoSeedSubscriptions: false,
+  });
+}
+
+async function runWizardFromCwd(): Promise<void> {
+  const { runWizard } = await import("./wizard.js");
+  await runWizard(process.cwd());
+}
+
+async function chooseSavedAgent(
+  rl: readline.Interface,
+  agents: StoredAgent[],
+): Promise<StoredAgent | null> {
+  const rows = agents.map((agent, index) => ({
+    label: String(index + 1),
+    value: `${compactValue(agent.publicId, 18, 6)}  ${compactValue(agent.mcpEndpoint, 34, 10)}`,
+  }));
+  printSummaryBlock("Saved agents", rows);
+  const answer = normalizeChoice(await ask(rl, `${W}Choose agent number or publicId${R}`, "1"));
+  const index = Number(answer);
+  if (Number.isInteger(index) && index >= 1 && index <= agents.length) {
+    return agents[index - 1] ?? null;
+  }
+  return agents.find((agent) => agent.publicId.toLowerCase() === answer) ?? null;
+}
+
+function parseSemver(value: string): [number, number, number] | null {
+  const match = value.match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return [Number(match[1]), Number(match[2]), Number(match[3])];
+}
+
+function isNewerVersion(latest: string, current: string): boolean {
+  const latestParts = parseSemver(latest);
+  const currentParts = parseSemver(current);
+  if (!latestParts || !currentParts) return latest !== current;
+  for (let index = 0; index < latestParts.length; index += 1) {
+    if (latestParts[index] > currentParts[index]) return true;
+    if (latestParts[index] < currentParts[index]) return false;
+  }
+  return false;
+}
+
 async function checkForUpdate(): Promise<boolean> {
   try {
     const res = await fetch("https://registry.npmjs.org/balchemy/latest", {
@@ -58,7 +140,7 @@ async function checkForUpdate(): Promise<boolean> {
     const pkg = require("../package.json") as { version: string };
     const current = pkg.version;
 
-    if (latest !== current) {
+    if (isNewerVersion(latest, current)) {
       process.stdout.write(
         `\n  ${G}Update available${R} ${D}${current}${R} → ${T}${latest}${R}\n`,
       );
@@ -110,8 +192,7 @@ async function main(): Promise<void> {
     case "--init":
     case "init": {
       // Force wizard — ignore cache
-      const { runWizard } = await import("./wizard.js");
-      await runWizard(process.cwd());
+      await runWizardFromCwd();
       break;
     }
 
@@ -157,63 +238,72 @@ async function main(): Promise<void> {
     }
 
     case undefined: {
-      // Default: check for cached agent
-      const cached = loadAgent();
+      // Default: choose from saved agents or run wizard.
+      const agents = listAgents();
+      const active = loadAgent();
+      const last = active ?? mostRecentAgent(agents);
 
-      if (cached) {
-        // Show cached agent info and ask what to do
+      if (last) {
+        // Show last/active agent info and ask what to do.
         const { renderLogo } = await import("./terminal-logo.js");
         process.stdout.write(renderLogo(20));
         process.stdout.write(`\n  ${G}B${T}alchemy ${W}Agent${R}\n`);
-        process.stdout.write(`  ${D}Saved session ready to resume${R}\n\n`);
-        printSummaryBlock("Saved session", [
-          { label: "Agent", value: cached.publicId },
-          { label: "Endpoint", value: cached.mcpEndpoint },
-          { label: "Model", value: cached.llmModel ?? "default" },
-          { label: "Strategy", value: cached.strategy },
-          { label: "Mode", value: cached.shadowMode ? "Shadow" : "LIVE" },
-          { label: "Saved", value: cached.createdAt },
+        process.stdout.write(`  ${D}Saved agents ready${R}\n\n`);
+        printSummaryBlock(active ? "Last session" : "Most recent session", [
+          { label: "Agent", value: last.publicId },
+          { label: "Endpoint", value: compactValue(last.mcpEndpoint, 42, 12) },
+          { label: "Model", value: last.llmModel ?? "default" },
+          { label: "Strategy", value: compactValue(last.strategy, 42, 8) },
+          { label: "Mode", value: last.shadowMode ? "Shadow" : "LIVE" },
+          { label: "Saved", value: last.createdAt },
         ]);
-        printSummaryBlock("Available actions", [
-          { label: "y", value: "Resume this saved session" },
-          { label: "n", value: "Open the chat setup for this saved agent" },
-          { label: "new", value: "Clear saved state and start fresh" },
-        ]);
+        const actions = [
+          { label: "y", value: "Resume this agent" },
+          ...(agents.length > 1 ? [{ label: "list", value: "Choose another saved agent" }] : []),
+          { label: "new", value: "Create a new agent or connect existing credentials" },
+        ];
+        printSummaryBlock("Available actions", actions);
         process.stdout.write("\n");
 
         const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-        const choice = await ask(rl, `${W}Resume this agent?${R} (y/n/new)`, "y");
-        rl.close();
+        try {
+          const choice = normalizeChoice(await ask(
+            rl,
+            `${W}Action?${R} (y${agents.length > 1 ? "/list" : ""}/new)`,
+            "y",
+          ));
 
-        if (choice === "y" || choice === "yes" || choice === "n" || choice === "no") {
-          // Resume into the chat cockpit. If setup is incomplete, the chat agent
-          // guides the remaining setup instead of launching the terminal wizard.
-          const { startTui } = await import("./tui/start.js");
-          await startTui({
-            mcpEndpoint: cached.mcpEndpoint,
-            apiKey: cached.apiKey,
-            llmProvider: cached.llmProvider,
-            llmApiKey: cached.llmApiKey,
-            llmModel: cached.llmModel,
-            llmBaseUrl: cached.llmBaseUrl,
-            maxDailyLlmCost: cached.maxDailyLlmCost,
-            llmTimeoutMs: cached.llmTimeoutMs,
-            publicId: cached.publicId,
-            strategy: cached.strategy,
-            shadowMode: cached.shadowMode,
-            behaviorRules: cached.behaviorRules,
-            autoSeedSubscriptions: false,
-          });
-        } else if (choice === "new") {
-          // New agent — clear cache and run the lightweight bootstrap wizard.
-          clearAgent();
-          const { runWizard } = await import("./wizard.js");
-          await runWizard(process.cwd());
+          if (choice === "y" || choice === "yes" || choice === "resume" || choice === "last") {
+            await startSavedAgent(last);
+          } else if (
+            Number.isInteger(Number(choice))
+            && Number(choice) >= 1
+            && Number(choice) <= agents.length
+          ) {
+            await startSavedAgent(agents[Number(choice) - 1]!);
+          } else if (
+            agents.length > 1
+            && (choice === "list" || choice === "choose" || choice === "select" || choice === "agents")
+          ) {
+            const selected = await chooseSavedAgent(rl, agents);
+            if (!selected) {
+              process.stdout.write(`  ${D}No matching saved agent. Starting setup instead.${R}\n\n`);
+              await runWizardFromCwd();
+            } else {
+              await startSavedAgent(selected);
+            }
+          } else if (choice === "new" || choice === "n") {
+            await runWizardFromCwd();
+          } else {
+            process.stdout.write(`  ${D}Unknown action. Starting setup instead.${R}\n\n`);
+            await runWizardFromCwd();
+          }
+        } finally {
+          rl.close();
         }
       } else {
-        // No cached agent — run wizard
-        const { runWizard } = await import("./wizard.js");
-        await runWizard(process.cwd());
+        // No saved agent — run wizard.
+        await runWizardFromCwd();
       }
       break;
     }
@@ -221,7 +311,7 @@ async function main(): Promise<void> {
     default: {
       process.stdout.write(`${T}Balchemy Agent CLI${R}\n\n`);
       printSummaryBlock("Commands", [
-        { label: "balchemy", value: "Resume agent or run setup" },
+        { label: "balchemy", value: "Resume/select an agent or run setup" },
         { label: "balchemy init", value: "Force a fresh setup wizard" },
         { label: "balchemy start [config]", value: "Start from an existing config file" },
         { label: "balchemy docker [outDir]", value: "Generate Docker files for deployment" },

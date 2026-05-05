@@ -17,6 +17,7 @@ import {
   persistStrategyAndBuildRestartConfig,
   toTuiConfig,
 } from "./session-sync.js";
+import { truncateEnd, truncateMiddle } from "./text-layout.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -58,8 +59,7 @@ const SETTINGS_ITEMS: SettingItem[] = [
 type BadgeTone = "brand" | "live" | "warning" | "danger";
 
 function compactId(value: string, head = 10, tail = 5): string {
-  if (value.length <= head + tail + 1) return value;
-  return `${value.slice(0, head)}...${value.slice(-tail)}`;
+  return truncateMiddle(value, head + tail + 3);
 }
 
 function resolveProviderLabel(provider: string, baseUrl?: string): string {
@@ -106,7 +106,14 @@ export function App({ config }: AppProps): React.ReactElement {
   const termWidth = stdout?.columns ?? 80;
   const termHeight = stdout?.rows ?? 24;
   const compactLayout = termWidth < 110;
-  const statusWidth = termWidth >= 148 ? 34 : termWidth >= 124 ? 30 : 28;
+  const outerPadding = 2;
+  const mainGap = compactLayout ? 0 : 1;
+  const availableWidth = Math.max(18, termWidth - outerPadding);
+  const statusWidth = compactLayout ? availableWidth : termWidth >= 148 ? 34 : termWidth >= 124 ? 30 : 28;
+  const activityPanelWidth = compactLayout
+    ? availableWidth
+    : Math.max(40, availableWidth - statusWidth - mainGap);
+  const chatPanelWidth = Math.max(18, activityPanelWidth - 2);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<StatusData>({
     ...INITIAL_STATUS,
@@ -230,7 +237,7 @@ export function App({ config }: AppProps): React.ReactElement {
       return;
     }
     if (input === "n" && key.ctrl) {
-      addSystemMsg("Creating new agent...");
+      addSystemMsg("Returning to the launcher. Run balchemy again to create or select an agent.");
       clearAgent();
       void bridgeRef.current?.stop().finally(() => exit());
       return;
@@ -457,9 +464,12 @@ export function App({ config }: AppProps): React.ReactElement {
 
   // ── Settings panel options ──────────────────────────────────────────────
 
+  const overlayWidth = availableWidth;
+  const overlayContentWidth = Math.max(16, overlayWidth - 4);
+  const settingsValueWidth = Math.max(8, overlayContentWidth - 18);
   const settingsOptions = SETTINGS_ITEMS.map((item, i) => {
     const val = settingsValues[item.key] ?? "...";
-    const display = val.length > 30 ? val.slice(0, 27) + "..." : val;
+    const display = truncateMiddle(val, settingsValueWidth);
     return { label: `${item.label.padEnd(16)} ${display}`, value: String(i) };
   });
 
@@ -489,7 +499,19 @@ export function App({ config }: AppProps): React.ReactElement {
   const mainHeight = Math.max(compactLayout ? 12 : 14, termHeight - (compactLayout ? 10 : 8) - overlayHeight);
   const statusPanelHeight = compactLayout ? Math.min(10, Math.max(7, Math.floor(mainHeight * 0.4))) : mainHeight;
   const activityHeight = compactLayout ? Math.max(6, mainHeight - statusPanelHeight - 1) : mainHeight;
-  const chatPageSize = Math.max(3, activityHeight - 5);
+  const estimatedMessageRows = compactLayout ? 7 : 8;
+  const chatPageSize = Math.max(1, Math.floor(Math.max(1, activityHeight - 5) / estimatedMessageRows));
+  const statusBadgeLabel = truncateMiddle(status.status.toUpperCase(), compactLayout ? 16 : 18);
+  const compactHeaderLine = truncateMiddle(
+    `${providerLabel} / ${headerModel} · LLM ${headerSpend}`,
+    overlayContentWidth,
+  );
+  const shortcutLine = truncateEnd(
+    `${compactLayout
+      ? "Commands  ^S settings  ^L clear  ^Q quit"
+      : "Commands  ^S settings  ^L clear  ^N new  ^Q quit"}${inSettings ? "  ESC back" : ""}`,
+    overlayContentWidth,
+  );
 
   return (
     <Box flexDirection="column" height="100%">
@@ -504,7 +526,7 @@ export function App({ config }: AppProps): React.ReactElement {
           <Box marginTop={compactLayout ? 1 : 0}>
             <HeaderBadge label={sessionBadge.label} tone={sessionTone} />
             <Text> </Text>
-            <HeaderBadge label={status.status.toUpperCase()} tone={statusTone} />
+            <HeaderBadge label={statusBadgeLabel} tone={statusTone} />
             {inSettings && (
               <>
                 <Text> </Text>
@@ -516,13 +538,7 @@ export function App({ config }: AppProps): React.ReactElement {
         {compactLayout ? (
           <Box marginTop={1} flexDirection="column">
             <Text dimColor>{compactId(config.publicId, 12, 5)}</Text>
-            <Box>
-              <Text color="cyan">{providerLabel}</Text>
-              <Text dimColor> / </Text>
-              <Text color="white">{compactId(headerModel, 18, 6)}</Text>
-              <Text dimColor>  ·  LLM </Text>
-              <Text color="white">{headerSpend}</Text>
-            </Box>
+            <Text color="cyan">{compactHeaderLine}</Text>
           </Box>
         ) : (
           <Box marginTop={1}>
@@ -538,11 +554,12 @@ export function App({ config }: AppProps): React.ReactElement {
       </Box>
 
       {/* Main content */}
-      <Box flexDirection={compactLayout ? "column" : "row"} height={mainHeight} paddingX={1} gap={1}>
-        <Box flexDirection="column" flexGrow={compactLayout ? 0 : 1} height={activityHeight} borderStyle="round" borderColor="gray" paddingY={0}>
+      <Box flexDirection={compactLayout ? "column" : "row"} height={mainHeight} paddingX={1} gap={mainGap}>
+        {compactLayout && <StatusPanel status={status} width={statusWidth} compact={compactLayout} height={statusPanelHeight} />}
+        <Box flexDirection="column" width={activityPanelWidth} flexShrink={0} height={activityHeight} borderStyle="round" borderColor="gray" paddingY={0}>
           <Box paddingX={1}>
             <Text color="white" bold>Activity</Text>
-            <Text dimColor>  chat, tool traces and live decisions</Text>
+            {!compactLayout && <Text dimColor>  chat, tool traces and live decisions</Text>}
           </Box>
           <ChatPanel
             messages={messages}
@@ -551,37 +568,38 @@ export function App({ config }: AppProps): React.ReactElement {
             hideInput={inSettings || Boolean(tradeConfirm)}
             pageSize={chatPageSize}
             inputPlaceholder="Ask, adjust rules, or inspect this session..."
+            width={chatPanelWidth}
           />
         </Box>
-        <StatusPanel status={status} width={statusWidth} compact={compactLayout} height={statusPanelHeight} />
+        {!compactLayout && <StatusPanel status={status} width={statusWidth} compact={compactLayout} height={statusPanelHeight} />}
       </Box>
 
       {/* Settings panel — replaces input area when active */}
       {appMode === "settings-select" && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1}>
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth}>
           <Box marginBottom={0}>
             <Text color="white" bold>Session Settings</Text>
-            <Text dimColor>  provider, limits and strategy controls</Text>
+            {!compactLayout && <Text dimColor>  provider, limits and strategy controls</Text>}
             {settingsLoading && <Text dimColor>  loading...</Text>}
           </Box>
           <Select options={settingsOptions} onChange={handleSettingSelected} />
-          <Text dimColor>Use arrows to move, Enter to edit, Esc to close.</Text>
+          <Text dimColor>{truncateMiddle("Use arrows to move, Enter to edit, Esc to close.", overlayContentWidth)}</Text>
         </Box>
       )}
 
       {appMode === "settings-edit-select" && editItem && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1}>
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth}>
           <Text color="white" bold>{editItem.label}</Text>
-          <Text dimColor>Select a new value for this setting.</Text>
+          <Text dimColor>{truncateMiddle("Select a new value for this setting.", overlayContentWidth)}</Text>
           <Select options={editSelectOptions} onChange={handleSelectValue} />
-          <Text dimColor>Use arrows to move, Enter to apply, Esc to go back.</Text>
+          <Text dimColor>{truncateMiddle("Use arrows to move, Enter to apply, Esc to go back.", overlayContentWidth)}</Text>
         </Box>
       )}
 
       {appMode === "settings-edit-text" && editItem && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1}>
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth}>
           <Text color="white" bold>{editItem.label}</Text>
-          <Text dimColor>Current value  {settingsValues[editItem.key] ?? "?"}</Text>
+          <Text dimColor>{truncateMiddle(`Current value  ${settingsValues[editItem.key] ?? "?"}`, overlayContentWidth)}</Text>
           <Box>
             <Text color="yellow" bold>New</Text>
             <Text dimColor>  </Text>
@@ -595,9 +613,9 @@ export function App({ config }: AppProps): React.ReactElement {
       )}
 
       {appMode === "settings-edit-apikey" && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1}>
-          <Text color="white" bold>API Key for {pendingProvider}</Text>
-          <Text dimColor>Paste the new key below. Esc skips this step.</Text>
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth}>
+          <Text color="white" bold>{truncateMiddle(`API Key for ${pendingProvider}`, overlayContentWidth)}</Text>
+          <Text dimColor>{truncateMiddle("Paste the new key below. Esc skips this step.", overlayContentWidth)}</Text>
           <Box>
             <Text color="yellow" bold>Key</Text>
             <Text dimColor>  </Text>
@@ -612,10 +630,10 @@ export function App({ config }: AppProps): React.ReactElement {
 
       {/* Trade confirmation overlay */}
       {tradeConfirm && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1}>
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth}>
           <Box marginBottom={1}>
             <HeaderBadge label="TRADE CHECK" tone="warning" />
-            <Text dimColor>  review before live execution</Text>
+            {!compactLayout && <Text dimColor>  review before live execution</Text>}
           </Box>
           <Text color="white" wrap="wrap">{tradeConfirm.preview}</Text>
           <Box marginTop={1}>
@@ -634,23 +652,8 @@ export function App({ config }: AppProps): React.ReactElement {
 
       {/* Bottom shortcut bar */}
       <Box paddingX={1} marginTop={1}>
-        <Box borderStyle="round" borderColor="gray" paddingX={1} flexGrow={1}>
-          <Text dimColor>Commands  </Text>
-          <Text color="cyan" bold>^S</Text>
-          <Text dimColor> settings  </Text>
-          <Text color="cyan" bold>^L</Text>
-          <Text dimColor> clear  </Text>
-          <Text color="cyan" bold>^N</Text>
-          <Text dimColor> new  </Text>
-          <Text color="cyan" bold>^Q</Text>
-          <Text dimColor> quit</Text>
-          {inSettings && (
-            <>
-              <Text dimColor>  </Text>
-              <Text color="yellow" bold>ESC</Text>
-              <Text dimColor> back</Text>
-            </>
-          )}
+        <Box borderStyle="round" borderColor="gray" paddingX={1} width={overlayWidth}>
+          <Text dimColor>{shortcutLine}</Text>
         </Box>
       </Box>
     </Box>

@@ -6,6 +6,9 @@ import type { ChatMessage, StatusData, TradeInfo, TuiConfig, WalletInfo } from "
 import { ChatAgent } from "./ChatAgent.js";
 import {
   buildSetupRequiredMessage,
+  getInitialSetupStep,
+  isSetupReady,
+  parseNetworkSelection,
   parseSetupStatusSnapshot,
   type SetupStatusSnapshot,
 } from "./setup-guidance.js";
@@ -70,6 +73,13 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return null;
+}
+
 function firstNumber(source: Record<string, unknown>, keys: string[]): number | undefined {
   for (const key of keys) {
     const value = source[key];
@@ -84,16 +94,28 @@ function firstNumber(source: Record<string, unknown>, keys: string[]): number | 
 
 function normalizeChain(value: unknown): WalletInfo["chain"] | null {
   const raw = String(value ?? "").toLowerCase();
-  if (raw === "sol" || raw === "solana") return "solana";
-  if (raw === "base" || raw === "evm" || raw === "8453") return "base";
+  if (raw === "sol" || raw === "solana" || raw === "solana-devnet" || raw === "devnet") return "solana";
+  if (raw === "base" || raw === "base-sepolia" || raw === "evm" || raw === "ethereum" || raw === "eth" || raw === "eip155" || raw === "1" || raw === "8453" || raw === "84532") return "base";
   return null;
 }
 
 function readWallet(value: unknown): WalletInfo | null {
   const record = asRecord(value);
   if (!record) return null;
-  const address = String(record.address ?? record.walletAddress ?? record.publicKey ?? "");
-  const chain = normalizeChain(record.chain ?? record.network ?? record.chainId);
+  const walletRecord = asRecord(record.wallet);
+  const address = firstString(
+    record.address,
+    record.walletAddress,
+    record.publicAddress,
+    record.publicKey,
+    record.custodialWalletAddress,
+    walletRecord?.address,
+    walletRecord?.walletAddress,
+    walletRecord?.publicAddress,
+    walletRecord?.publicKey,
+    walletRecord?.custodialWalletAddress,
+  );
+  const chain = normalizeChain(record.chain ?? record.network ?? record.chainId ?? walletRecord?.chain ?? walletRecord?.network ?? walletRecord?.chainId);
   if (!address || !chain) return null;
   return { chain, address };
 }
@@ -151,7 +173,28 @@ function collectWallets(source: Record<string, unknown>): WalletInfo[] {
   const baseAddress = source.baseWalletAddress ?? source.baseWallet ?? source.evmWallet;
   if (typeof baseAddress === "string") push({ chain: "base", address: baseAddress });
 
+  const funding = asRecord(source.funding);
+  if (funding) {
+    push(readWallet({
+      address: funding.custodialWalletAddress ?? funding.address,
+      chain: funding.chain ?? funding.chainId ?? "base",
+    }));
+  }
+
+  for (const key of ["status", "setupStatus", "data", "snapshot", "portfolio"]) {
+    const nested = asRecord(source[key]);
+    if (nested) {
+      for (const wallet of collectWallets(nested)) push(wallet);
+    }
+  }
+
   return wallets;
+}
+
+function readTokenHumanAmount(value: unknown): number | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  return firstNumber(record, ["human", "amount", "balance"]);
 }
 
 function sumWalletBalances(source: Record<string, unknown>): { balanceSol?: number; balanceUsd?: number } {
@@ -181,6 +224,28 @@ function sumWalletBalances(source: Record<string, unknown>): { balanceSol?: numb
     }
   }
 
+  const wallets = asRecord(source.wallets);
+  if (wallets) {
+    for (const walletValue of Object.values(wallets)) {
+      const wallet = asRecord(walletValue);
+      const walletBalances = asRecord(wallet?.balances);
+      if (!walletBalances) continue;
+      for (const [symbol, tokenBalance] of Object.entries(walletBalances)) {
+        const amount = readTokenHumanAmount(tokenBalance);
+        if (amount === undefined) continue;
+        const upperSymbol = symbol.toUpperCase();
+        if (upperSymbol === "SOL") {
+          balanceSol += amount;
+          hasSol = true;
+        }
+        if (upperSymbol === "USDC" || upperSymbol === "TUSD" || upperSymbol === "USD") {
+          balanceUsd += amount;
+          hasUsd = true;
+        }
+      }
+    }
+  }
+
   return {
     ...(hasSol ? { balanceSol } : {}),
     ...(hasUsd ? { balanceUsd } : {}),
@@ -203,6 +268,105 @@ type StateSetters = {
   confirmTrade: (preview: string) => Promise<boolean>;
 };
 
+type SetupStep =
+  | "developer-wallet"
+  | "developer-wallet-confirm"
+  | "networks"
+  | "solana-recovery-wallet"
+  | "solana-recovery-wallet-confirm"
+  | "slippage"
+  | "strategy"
+  | "strategy-confirm"
+  | "subscriptions";
+
+interface SetupFlowState {
+  step: SetupStep;
+  developerWallet?: string;
+  solanaRecoveryWallet?: string;
+  selectedChains?: WalletInfo["chain"][];
+  slippageBps?: number;
+  strategyText?: string;
+  chainStrategies?: Partial<Record<WalletInfo["chain"], string>>;
+  currentStrategyChain?: WalletInfo["chain"];
+  maxTradeSol?: number;
+  maxTradeUsd?: number;
+}
+
+function isEvmAddress(value: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(value.trim());
+}
+
+function isSolanaAddress(value: string): boolean {
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(value.trim());
+}
+
+function isAffirmative(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return ["y", "yes", "yep", "yeah", "evet", "ok", "okay", "tamam", "onay", "onayliyorum"].includes(normalized);
+}
+
+function isNegative(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return ["n", "no", "nope", "hayir", "hayir istemiyorum", "iptal", "degistir"].includes(normalized);
+}
+
+function parseSlippageBps(value: string): number | null {
+  const normalized = value.trim().toLowerCase();
+  const match = normalized.match(/([0-9]+(?:[.,][0-9]+)?)/);
+  if (!match) return null;
+  const numeric = Number(match[1].replace(",", "."));
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  const explicitBps = /\b(bps|basis)\b/.test(normalized);
+  const bps = explicitBps ? Math.round(numeric) : Math.round(numeric * 100);
+  if (bps < 1 || bps > 5_000) return null;
+  return bps;
+}
+
+function parseTradeLimits(value: string): { maxTradeSol?: number; maxTradeUsd?: number } {
+  const solMatch = value.match(/([0-9]+(?:[.,][0-9]+)?)\s*(?:sol)\b/i);
+  const usdMatch = value.match(/(?:\$|usd\s*)\s*([0-9]+(?:[.,][0-9]+)?)/i)
+    ?? value.match(/([0-9]+(?:[.,][0-9]+)?)\s*(?:usd|usdc|dollar)\b/i);
+  const maxTradeSol = solMatch ? Number(solMatch[1].replace(",", ".")) : undefined;
+  const maxTradeUsd = usdMatch ? Number(usdMatch[1].replace(",", ".")) : undefined;
+  return {
+    ...(maxTradeSol !== undefined && Number.isFinite(maxTradeSol) ? { maxTradeSol } : {}),
+    ...(maxTradeUsd !== undefined && Number.isFinite(maxTradeUsd) ? { maxTradeUsd } : {}),
+  };
+}
+
+function formatChains(chains: WalletInfo["chain"][]): string {
+  return chains.map((chain) => chain === "solana" ? "Solana" : "Base").join(" + ");
+}
+
+function chainTitle(chain: WalletInfo["chain"]): string {
+  return chain === "solana" ? "Solana" : "Base";
+}
+
+function extractMasterKey(source: Record<string, unknown>): string | null {
+  const direct = firstString(source.masterKey, source.master_key);
+  if (direct) return direct;
+  const reply = firstString(source.reply, source.message);
+  if (!reply) return null;
+  const match = reply.match(/master key(?:\s+is)?\s*:\s*([^\s—]+)/i);
+  return match?.[1] ?? null;
+}
+
+function buildCombinedStrategy(flow: SetupFlowState): string {
+  if (flow.strategyText) return flow.strategyText;
+  const chainStrategies = flow.chainStrategies ?? {};
+  const parts: string[] = [];
+  if (chainStrategies.solana) parts.push(`Solana strategy:\n${chainStrategies.solana}`);
+  if (chainStrategies.base) parts.push(`Base strategy:\n${chainStrategies.base}`);
+  return parts.join("\n\n");
+}
+
+function nextStrategyChain(
+  chains: WalletInfo["chain"][],
+  chainStrategies: Partial<Record<WalletInfo["chain"], string>>,
+): WalletInfo["chain"] | null {
+  return chains.find((chain) => !chainStrategies[chain]) ?? null;
+}
+
 export class AgentBridge {
   private loop: AgentLoop | null = null;
   private mcp: BalchemyMcpClient;
@@ -213,6 +377,7 @@ export class AgentBridge {
   private lowBalanceWarned = false;
   private pendingLoopConfig: AgentLoopConfig | null = null;
   private setupPollTimer: NodeJS.Timeout | null = null;
+  private setupFlow: SetupFlowState | null = null;
 
   constructor(config: TuiConfig, setters: StateSetters) {
     this.config = config;
@@ -347,35 +512,20 @@ export class AgentBridge {
       model: this.config.llmModel,
     }));
 
-    // Input is ready now — kick off greeting + balance check in the background
-    void this.greet(setupComplete, setupStatus);
+    // Input is ready now. Setup must be deterministic; do not let an LLM drive it.
+    if (setupComplete) {
+      void this.greet(true);
+    } else {
+      this.beginSetupFlow(setupStatus);
+    }
   }
 
   /** Background greeting after start — does not block input activation. */
-  private async greet(setupComplete: boolean, setupStatus: SetupStatusSnapshot | null): Promise<void> {
+  private async greet(setupComplete: boolean): Promise<void> {
     if (!this.chatAgent) return;
 
     if (setupComplete) {
       await this.checkBalance();
-    }
-
-    if (!setupComplete) {
-      try {
-        const reply = await this.chatAgent.chat(
-          "Start my Balchemy setup. First call setup_agent get_status, then ask me only the next required setup question.",
-          (name, result) => {
-            this.applyToolResult(name, result);
-            if (name !== "setup_agent") {
-              this.addSystemMessage(`Tool: ${name}`);
-            }
-          },
-        );
-        this.addAgentMessage(reply || buildSetupRequiredMessage(setupStatus ?? {}));
-      } catch (err: unknown) {
-        this.addAgentMessage(buildSetupRequiredMessage(setupStatus ?? {}));
-        this.addErrorMessage(`LLM setup prompt failed: ${err instanceof Error ? err.message : String(err)}`);
-      }
-      return;
     }
 
     try {
@@ -418,13 +568,19 @@ export class AgentBridge {
   }
 
   async sendUserMessage(text: string): Promise<void> {
-    if (!this.chatAgent) return;
     this.setters.addMessage({
       id: randomUUID(),
       type: "user",
       text,
       timestamp: Date.now(),
     });
+
+    if (this.setupFlow) {
+      await this.handleSetupInput(text);
+      return;
+    }
+
+    if (!this.chatAgent) return;
     try {
       const reply = await this.chatAgent.chat(
         text,
@@ -445,7 +601,7 @@ export class AgentBridge {
 
   /** Start AgentLoop if setup just completed during this session. */
   private async tryStartLoop(): Promise<void> {
-    if (this.loop || !this.pendingLoopConfig) return;
+    if (this.loop || !this.pendingLoopConfig || this.setupFlow) return;
     const setupStatus = await this.fetchSetupStatus();
     const nowComplete = this.isSetupComplete(setupStatus);
     if (nowComplete) {
@@ -470,12 +626,270 @@ export class AgentBridge {
     this.setupPollTimer.unref();
   }
 
+  private beginSetupFlow(status: SetupStatusSnapshot | null): void {
+    const snapshot = status ?? {};
+    const step = getInitialSetupStep(snapshot);
+    this.setupFlow = {
+      step,
+      ...(snapshot.selectedChains && snapshot.selectedChains.length > 0 ? { selectedChains: snapshot.selectedChains } : {}),
+    };
+
+    this.addAgentMessage(
+      `${buildSetupRequiredMessage(snapshot)}\n\n${this.setupPromptFor(this.setupFlow.step)}`,
+    );
+  }
+
+  private setupPromptFor(step: SetupStep): string {
+    switch (step) {
+      case "developer-wallet":
+        return "Paste your Base/EVM 0x developer wallet. This is the recovery, Hub, and withdrawal wallet. Trading wallets are created separately.";
+      case "developer-wallet-confirm":
+        return "Paste the same 0x developer wallet again to confirm it.";
+      case "networks":
+        return "Which networks should this agent trade on: Solana, Base, or both?";
+      case "solana-recovery-wallet":
+        return "Paste your Solana recovery/withdrawal wallet address. This is where SOL/SPL withdrawals go, and it is separate from the Solana trading wallet I create for execution.";
+      case "solana-recovery-wallet-confirm":
+        return "Paste the same Solana recovery/withdrawal wallet again to confirm it.";
+      case "slippage":
+        return "Set slippage in percent or bps. Examples: 1% = 100 bps, 3% = 300 bps, 5% = 500 bps.";
+      case "strategy":
+        return "Send the hard limits and strategy for this chain. Include max trade size, entry filters, stop loss, take profit, max positions, and tokens/categories to avoid.";
+      case "strategy-confirm":
+        return "Confirm with 'yes'/'evet', or say 'no'/'hayir' to rewrite the strategy.";
+      case "subscriptions":
+        return "Create monitoring subscriptions now? For Solana new launches I can enable launch monitoring. Answer yes/evet or no/hayir.";
+    }
+  }
+
+  private async handleSetupInput(text: string): Promise<void> {
+    const flow = this.setupFlow;
+    if (!flow) return;
+
+    try {
+      if (flow.step === "developer-wallet") {
+        const wallet = text.trim();
+        if (!isEvmAddress(wallet)) {
+          this.addAgentMessage("That is not a valid 0x EVM address. Paste a Base/EVM wallet like 0x...");
+          return;
+        }
+        this.setupFlow = { ...flow, step: "developer-wallet-confirm", developerWallet: wallet };
+        this.addAgentMessage(this.setupPromptFor("developer-wallet-confirm"));
+        return;
+      }
+
+      if (flow.step === "developer-wallet-confirm") {
+        const wallet = text.trim();
+        if (!flow.developerWallet || wallet.toLowerCase() !== flow.developerWallet.toLowerCase()) {
+          this.setupFlow = { step: "developer-wallet" };
+          this.addAgentMessage("The confirmation did not match. Start again by pasting the Base/EVM 0x developer wallet.");
+          return;
+        }
+        const structured = await this.callSetupAgent({
+          action: "bind_developer_wallet",
+          walletAddress: flow.developerWallet,
+          walletAddressConfirm: wallet,
+        });
+        const masterKey = extractMasterKey(structured);
+        this.setupFlow = { step: "networks" };
+        this.addAgentMessage(
+          masterKey
+            ? `Developer wallet bound.\n\nCopy and store this master key now:\n${masterKey}\n\nIt is shown once in real environments.\n\n${this.setupPromptFor("networks")}`
+            : `Developer wallet bound.\n\n${this.setupPromptFor("networks")}`,
+        );
+        return;
+      }
+
+      if (flow.step === "networks") {
+        const chains = parseNetworkSelection(text);
+        if (!chains) {
+          this.addAgentMessage("Choose Solana, Base, or both.");
+          return;
+        }
+        const walletLines: string[] = [];
+        for (const chain of chains) {
+          const structured = await this.callSetupAgent({ action: "create_wallet", chain });
+          const address = firstString(structured.address, asRecord(structured.wallet)?.address);
+          walletLines.push(`${chainTitle(chain)} trading wallet: ${address ?? "(created)"}`);
+        }
+        this.setupFlow = {
+          step: chains.includes("solana") ? "solana-recovery-wallet" : "slippage",
+          selectedChains: chains,
+        };
+        this.addAgentMessage(
+          `Trading networks configured: ${formatChains(chains)}.\n\nCopyable trading wallet addresses:\n${walletLines.join("\n")}\n\n${this.setupPromptFor(chains.includes("solana") ? "solana-recovery-wallet" : "slippage")}`,
+        );
+        return;
+      }
+
+      if (flow.step === "solana-recovery-wallet") {
+        const wallet = text.trim();
+        if (!isSolanaAddress(wallet)) {
+          this.addAgentMessage("That is not a valid Solana wallet address. Paste a base58 Solana public key.");
+          return;
+        }
+        this.setupFlow = { ...flow, step: "solana-recovery-wallet-confirm", solanaRecoveryWallet: wallet };
+        this.addAgentMessage(this.setupPromptFor("solana-recovery-wallet-confirm"));
+        return;
+      }
+
+      if (flow.step === "solana-recovery-wallet-confirm") {
+        const wallet = text.trim();
+        if (!flow.solanaRecoveryWallet || wallet !== flow.solanaRecoveryWallet) {
+          this.setupFlow = {
+            step: "solana-recovery-wallet",
+            ...(flow.developerWallet ? { developerWallet: flow.developerWallet } : {}),
+            ...(flow.selectedChains ? { selectedChains: flow.selectedChains } : {}),
+          };
+          this.addAgentMessage("The Solana wallet confirmation did not match. Paste the Solana recovery/withdrawal wallet again.");
+          return;
+        }
+        try {
+          await this.callSetupAgent({
+            action: "bind_solana_developer_wallet",
+            solanaWalletAddress: flow.solanaRecoveryWallet,
+            solanaWalletAddressConfirm: wallet,
+          });
+        } catch (err: unknown) {
+          this.addSystemMessage(`Solana recovery wallet stored locally for this setup. MCP did not bind it directly: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        this.setupFlow = { ...flow, step: "slippage", solanaRecoveryWallet: wallet };
+        this.addAgentMessage(`Solana recovery/withdrawal wallet confirmed:\n${wallet}\n\n${this.setupPromptFor("slippage")}`);
+        return;
+      }
+
+      if (flow.step === "slippage") {
+        const bps = parseSlippageBps(text);
+        if (bps === null) {
+          this.addAgentMessage("I could not parse that slippage. Send a value like 3%, 300 bps, or 5.");
+          return;
+        }
+        await this.callSetupAgent({ action: "configure_slippage", slippageBps: bps });
+        const selectedChains = flow.selectedChains ?? ["solana"];
+        const currentStrategyChain = nextStrategyChain(selectedChains, {}) ?? selectedChains[0];
+        this.setupFlow = { ...flow, step: "strategy", slippageBps: bps, currentStrategyChain, chainStrategies: {} };
+        this.addAgentMessage(`Slippage set to ${bps} bps.\n\n${chainTitle(currentStrategyChain)} strategy:\n${this.setupPromptFor("strategy")}`);
+        return;
+      }
+
+      if (flow.step === "strategy") {
+        const strategyText = text.trim();
+        if (strategyText.length < 20) {
+          this.addAgentMessage("The strategy is too short. Include limits, entries, exits, max positions, and avoid rules.");
+          return;
+        }
+        const chainStrategies = {
+          ...(flow.chainStrategies ?? {}),
+          ...(flow.currentStrategyChain ? { [flow.currentStrategyChain]: strategyText } : {}),
+        };
+        const selectedChains = flow.selectedChains ?? (flow.currentStrategyChain ? [flow.currentStrategyChain] : ["solana"]);
+        const nextChain = nextStrategyChain(selectedChains, chainStrategies);
+        if (nextChain) {
+          this.setupFlow = { ...flow, chainStrategies, currentStrategyChain: nextChain };
+          this.addAgentMessage(`${chainTitle(flow.currentStrategyChain ?? selectedChains[0])} strategy saved.\n\n${chainTitle(nextChain)} strategy:\n${this.setupPromptFor("strategy")}`);
+          return;
+        }
+        const combinedStrategy = buildCombinedStrategy({ ...flow, chainStrategies });
+        const limits = parseTradeLimits(combinedStrategy);
+        this.setupFlow = { ...flow, ...limits, chainStrategies, step: "strategy-confirm", strategyText: combinedStrategy };
+        this.addAgentMessage(
+          `Review before live configuration:\n\n${combinedStrategy}\n\nMax SOL/trade: ${limits.maxTradeSol ?? "not specified"}\nMax USD/trade: ${limits.maxTradeUsd ?? "not specified"}\n\n${this.setupPromptFor("strategy-confirm")}`,
+        );
+        return;
+      }
+
+      if (flow.step === "strategy-confirm") {
+        if (isNegative(text)) {
+          this.setupFlow = {
+            step: "strategy",
+            ...(flow.developerWallet ? { developerWallet: flow.developerWallet } : {}),
+            ...(flow.solanaRecoveryWallet ? { solanaRecoveryWallet: flow.solanaRecoveryWallet } : {}),
+            ...(flow.selectedChains ? { selectedChains: flow.selectedChains } : {}),
+            ...(flow.slippageBps !== undefined ? { slippageBps: flow.slippageBps } : {}),
+            chainStrategies: {},
+            currentStrategyChain: (flow.selectedChains ?? ["solana"])[0],
+          };
+          this.addAgentMessage(this.setupPromptFor("strategy"));
+          return;
+        }
+        if (!isAffirmative(text)) {
+          this.addAgentMessage(this.setupPromptFor("strategy-confirm"));
+          return;
+        }
+        if (!flow.strategyText) {
+          this.setupFlow = { ...flow, step: "strategy" };
+          this.addAgentMessage(this.setupPromptFor("strategy"));
+          return;
+        }
+        await this.callSetupAgent({
+          ...buildStrategyUpdateArgs(flow.strategyText, false),
+          chainStrategies: flow.chainStrategies,
+          selectedChains: flow.selectedChains,
+          solanaRecoveryWallet: flow.solanaRecoveryWallet,
+          ...(flow.maxTradeSol !== undefined ? { maxTradeSol: flow.maxTradeSol } : {}),
+          ...(flow.maxTradeUsd !== undefined ? { maxTradeUsd: flow.maxTradeUsd } : {}),
+        });
+        this.setupFlow = { ...flow, step: "subscriptions" };
+        this.addAgentMessage(`Strategy configured for live execution.\n\n${this.setupPromptFor("subscriptions")}`);
+        return;
+      }
+
+      if (flow.step === "subscriptions") {
+        if (isAffirmative(text)) {
+          const chains = flow.selectedChains ?? ["solana"];
+          if (chains.includes("solana")) {
+            await this.mcp.callTool("create_subscription", {
+              type: "new_token_launch",
+              chain: "solana",
+              filter: { platform: "pumpfun" },
+              format: "summary",
+            });
+            this.addSystemMessage("Tool: create_subscription");
+          }
+        } else if (!isNegative(text)) {
+          this.addAgentMessage(this.setupPromptFor("subscriptions"));
+          return;
+        }
+        this.setupFlow = null;
+        this.addAgentMessage("Setup is complete. I am starting the agent loop and checking the portfolio now.");
+        await this.tryStartLoop();
+      }
+    } catch (err: unknown) {
+      this.addErrorMessage(`Setup failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.addAgentMessage(`${this.setupPromptFor(this.setupFlow?.step ?? flow.step)} Try again.`);
+    }
+  }
+
+  private async callSetupAgent(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const resp = await this.mcp.callTool("setup_agent", args);
+    const text = resp.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
+    this.applyToolResult("setup_agent", text);
+    this.addSystemMessage(`Tool: setup_agent ${String(args.action ?? "")}`.trim());
+    const parsed = parseJsonObject(text);
+    if (!parsed) throw new Error("setup_agent returned non-JSON response");
+    const structured = asRecord(parsed.structured) ?? parsed;
+    if (parsed.ok === false || structured.error) {
+      throw new Error(String(structured.error ?? parsed.error ?? "setup_agent rejected the request"));
+    }
+    return {
+      ...parsed,
+      ...structured,
+    };
+  }
+
   private applyToolResult(name: string, resultText: string): void {
     const parsed = parseJsonObject(resultText);
     if (!parsed) return;
 
     if (name === "setup_agent") {
       const structured = asRecord(parsed.structured) ?? parsed;
+      const wallets = collectWallets(structured);
+      if (wallets.length > 0) {
+        this.setters.setStatus((prev) => ({
+          ...prev,
+          wallets: mergeWallets(prev.wallets, wallets),
+        }));
+      }
       if (structured.action === "create_wallet") {
         const chain = normalizeChain(structured.chain);
         const address = typeof structured.address === "string" ? structured.address : undefined;
@@ -493,7 +907,7 @@ export class AgentBridge {
 
   private applyPortfolioSnapshot(parsed: Record<string, unknown>): void {
     const structured = asRecord(parsed.structured);
-    const snapshot = asRecord(structured?.snapshot) ?? asRecord(parsed.snapshot) ?? parsed;
+    const snapshot = asRecord(structured?.snapshot) ?? asRecord(parsed.snapshot) ?? asRecord(parsed.portfolio) ?? parsed;
     const data = asRecord(snapshot.data);
     const wallets = mergeWallets(collectWallets(snapshot), data ? collectWallets(data) : []);
     const summed = data ? sumWalletBalances(data) : sumWalletBalances(snapshot);
@@ -509,7 +923,7 @@ export class AgentBridge {
       ...prev,
       ...(balanceSol !== undefined ? { balanceSol } : {}),
       ...(balanceUsd !== undefined ? { balanceUsd } : {}),
-      ...(wallets.length > 0 ? { wallets } : {}),
+      ...(wallets.length > 0 ? { wallets: mergeWallets(prev.wallets, wallets) } : {}),
       ...(positions ? { activeTrades: positions } : {}),
     }));
   }
@@ -575,7 +989,7 @@ export class AgentBridge {
   }
 
   private isSetupComplete(status: SetupStatusSnapshot | null): boolean {
-    return status?.tradingConfigured === true && status?.walletsConfigured === true;
+    return isSetupReady(status);
   }
 
   /** Silent balance refresh — updates status panel only, no chat messages. */
@@ -596,7 +1010,7 @@ export class AgentBridge {
       const text = response.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
       const parsed = parseJsonObject(text);
       const snapshot = parsed
-        ? asRecord(asRecord(parsed.structured)?.snapshot) ?? asRecord(parsed.snapshot) ?? parsed
+        ? asRecord(asRecord(parsed.structured)?.snapshot) ?? asRecord(parsed.snapshot) ?? asRecord(parsed.portfolio) ?? parsed
         : {};
       const data = asRecord(snapshot.data);
       const sol = firstNumber(snapshot, ["totalValueSol", "portfolioValueSol", "portfolio_value_sol", "total_value_sol"])

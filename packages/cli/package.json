@@ -1,6 +1,6 @@
 {
   "name": "balchemy",
-  "version": "0.1.18",
+  "version": "0.1.22",
   "license": "MIT",
   "type": "module",
   "description": "Scaffold and run a Balchemy autonomous AI trading agent in 5 minutes",

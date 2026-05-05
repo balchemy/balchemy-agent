@@ -215,15 +215,11 @@ export function saveAgent(agent: StoredAgent): void {
   writeStore(store);
 }
 
-/** Load the active agent, or null if none. */
+/** Load the explicitly active agent, or null if none is selected. */
 export function loadAgent(): StoredAgent | null {
   const store = readStore();
-  if (!store.activeId) return store.agents[0] ?? null;
-  return (
-    store.agents.find((a) => a.publicId === store.activeId) ??
-    store.agents[0] ??
-    null
-  );
+  if (!store.activeId) return null;
+  return store.agents.find((a) => a.publicId === store.activeId) ?? null;
 }
 
 /** List all saved agents. */
