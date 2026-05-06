@@ -54,7 +54,11 @@ function compactValue(value: string, head = 28, tail = 8): string {
 }
 
 function normalizeChoice(value: string): string {
-  return value.trim().toLowerCase();
+  const trimmed = value.trim().toLowerCase();
+  if (/^([0-9a-z])\1+$/.test(trimmed)) {
+    return trimmed[0] ?? trimmed;
+  }
+  return trimmed;
 }
 
 function mostRecentAgent(agents: StoredAgent[]): StoredAgent | null {
@@ -145,7 +149,7 @@ async function checkForUpdate(): Promise<boolean> {
         `\n  ${G}Update available${R} ${D}${current}${R} → ${T}${latest}${R}\n`,
       );
 
-      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false });
       const answer = await ask(rl, `${W}Update now?${R} (Y/n)`, "y");
       rl.close();
 
@@ -265,7 +269,7 @@ async function main(): Promise<void> {
         printSummaryBlock("Available actions", actions);
         process.stdout.write("\n");
 
-        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false });
         try {
           const choice = normalizeChoice(await ask(
             rl,

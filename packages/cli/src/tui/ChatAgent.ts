@@ -119,6 +119,15 @@ export class ChatAgent {
     return this.enqueueChat(() => this.runChat(userMessage, onToolCall, confirmTrade));
   }
 
+  /**
+   * Ask the selected external LLM for a plain text response with no MCP tools
+   * and no conversation-history mutation. Used for setup coaching where the
+   * deterministic wizard owns tool execution.
+   */
+  async completeText(systemPrompt: string, userMessage: string): Promise<string> {
+    return this.enqueueChat(() => this.callTextOnly(systemPrompt, userMessage));
+  }
+
   private enqueueChat<T>(run: () => Promise<T>): Promise<T> {
     const previous = this.chatQueue;
     let release: (() => void) | undefined;
@@ -206,6 +215,106 @@ export class ChatAgent {
   }
 
   // ── LLM Call ──────────────────────────────────────────────────────────────
+
+  private async callTextOnly(systemPrompt: string, userMessage: string): Promise<string> {
+    if (this.config.llmProvider === "anthropic") {
+      return this.callAnthropicTextOnly(systemPrompt, userMessage);
+    }
+    return this.callOpenAiTextOnly(systemPrompt, userMessage);
+  }
+
+  private async callOpenAiTextOnly(systemPrompt: string, userMessage: string): Promise<string> {
+    const baseUrl = (this.config.llmBaseUrl ?? "https://api.openai.com/v1").replace(/\/+$/, "");
+    if (isDefaultOpenAiBaseUrl(baseUrl) && !isOpenAiPlatformApiKey(this.config.llmApiKey)) {
+      throw new Error(
+        "OpenAI ChatGPT subscription login is not a Platform API key. Run `balchemy init`, choose OpenAI API Key, and paste a key from platform.openai.com/api-keys.",
+      );
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.config.llmTimeoutMs ?? 30_000);
+
+    try {
+      const body: Record<string, unknown> = {
+        model: this.config.llmModel ?? "gpt-5.4-mini",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+        max_completion_tokens: 1200,
+        store: false,
+      };
+
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.config.llmApiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`LLM API ${res.status}: ${errText.replace(/\{[\s\S]*\}/g, "").trim().slice(0, 120) || errText.slice(0, 120)}`);
+      }
+
+      const data = await res.json() as {
+        choices: Array<{
+          message: {
+            content?: string;
+          };
+        }>;
+      };
+
+      return data.choices[0]?.message.content ?? "";
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private async callAnthropicTextOnly(systemPrompt: string, userMessage: string): Promise<string> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.config.llmTimeoutMs ?? 30_000);
+
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-api-key": this.config.llmApiKey,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: this.config.llmModel ?? "claude-haiku-4-5-20251001",
+          max_tokens: 1200,
+          system: systemPrompt,
+          messages: [{ role: "user", content: userMessage }],
+        }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`Anthropic API ${res.status}: ${errText.replace(/\{[\s\S]*\}/g, "").trim().slice(0, 120) || errText.slice(0, 120)}`);
+      }
+
+      const data = await res.json() as {
+        content: Array<
+          | { type: "text"; text: string }
+          | { type: string }
+        >;
+      };
+
+      return data.content
+        .filter((item): item is { type: "text"; text: string } => item.type === "text")
+        .map((item) => item.text)
+        .join("\n");
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   private async callLlm(): Promise<{
     text: string;
@@ -471,6 +580,7 @@ When setup is incomplete, first call setup_agent with action="get_status". Then 
 - shadowMode is ALWAYS false. Never enable it.
 - Complete ALL setup steps before trading.
 - Always show wallet addresses and master key to the user.
+- If the user asks where to fund or which wallet is active, prefer the "Known Balchemy runtime context" included in the latest user message. If that context lists a Solana or Base trading wallet, never say that wallet is not visible.
 - Ask questions and wait for answers — don't rush through setup.
 - When the user tells you their strategy, repeat it back to confirm before configuring.
 - Never assume both chains. Ask Solana/Base/both, then create only the selected chain wallets.

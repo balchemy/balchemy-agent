@@ -239,6 +239,22 @@ function ask(rl: readline.Interface, question: string, defaultVal = ""): Promise
   });
 }
 
+function normalizeChoiceInput(value: string): string {
+  const trimmed = value.trim();
+  if (/^([1-9])\1+$/.test(trimmed)) {
+    return trimmed[0] ?? trimmed;
+  }
+  return trimmed;
+}
+
+function normalizeNumericInput(value: string): string {
+  const trimmed = value.trim();
+  if (/^([0-9])\1$/.test(trimmed)) {
+    return trimmed[0] ?? trimmed;
+  }
+  return trimmed;
+}
+
 function askSecret(rl: readline.Interface, question: string): Promise<string> {
   return new Promise((resolve) => {
     rl.question(`  ${T}${question}${R}: `, (answer) => {
@@ -249,8 +265,8 @@ function askSecret(rl: readline.Interface, question: string): Promise<string> {
 
 function askNumber(rl: readline.Interface, question: string, defaultVal: number): Promise<number> {
   return ask(rl, question, String(defaultVal)).then((v) => {
-    const n = parseFloat(v);
-    return isNaN(n) ? defaultVal : n;
+    const n = parseFloat(normalizeNumericInput(v));
+    return Number.isFinite(n) ? n : defaultVal;
   });
 }
 
@@ -275,7 +291,7 @@ async function askChoice<T extends { label: string }>(
   printChoices(items, extraInfo);
   process.stdout.write(`  ${D}Press Enter to use the default option.${R}\n`);
   const answer = await ask(rl, `Choose [1-${items.length}]`, "1");
-  const idx = parseInt(answer, 10) - 1;
+  const idx = parseInt(normalizeChoiceInput(answer), 10) - 1;
   if (idx >= 0 && idx < items.length) return items[idx];
   return items[0];
 }
@@ -537,6 +553,7 @@ export async function runWizard(outDir: string): Promise<void> {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
+    terminal: false,
   });
 
   process.stdout.write(renderLogo(20));
@@ -649,6 +666,9 @@ export async function runWizard(outDir: string): Promise<void> {
         { label: "Endpoint", value: mcpEndpoint },
         { label: "API key", value: maskValue(apiKey, 10, 4) },
       ], "success");
+
+      printInfo(`Full Balchemy API key will be written to ${path.join(outDir, ".env")} as BALCHEMY_API_KEY.`);
+      printInfo("The master key is created in the chat setup after you bind the Base/EVM developer wallet; copy it when it appears.\n");
 
       printInfo("Next, the chat cockpit will guide setup: developer wallet, Solana/Base choice, trading wallets, slippage, hard limits and strategy.\n");
     } else {

@@ -13,7 +13,7 @@ import {
   type SetupStatusSnapshot,
 } from "./setup-guidance.js";
 import { buildStrategyUpdateArgs } from "./session-sync.js";
-import { loadAgent } from "../agent-store.js";
+import { loadAgent, saveAgent, type StoredAgent } from "../agent-store.js";
 
 /** Truncate verbose API errors (429 JSON blobs, stack traces) to a readable one-liner. */
 function truncateError(raw: string): string {
@@ -65,6 +65,25 @@ function parseJsonObject(text: string): Record<string, unknown> | null {
   } catch (_error: unknown) {
     return null;
   }
+}
+
+function parseJsonObjectLoose(text: string): Record<string, unknown> | null {
+  const direct = parseJsonObject(text);
+  if (direct) return direct;
+
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) {
+    const parsed = parseJsonObject(fenced[1].trim());
+    if (parsed) return parsed;
+  }
+
+  const first = text.indexOf("{");
+  const last = text.lastIndexOf("}");
+  if (first >= 0 && last > first) {
+    return parseJsonObject(text.slice(first, last + 1));
+  }
+
+  return null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -130,6 +149,25 @@ function mergeWallets(...groups: WalletInfo[][]): WalletInfo[] {
     }
   }
   return wallets;
+}
+
+function mergeLatestWallets(...groups: WalletInfo[][]): WalletInfo[] {
+  const latest = new Map<WalletInfo["chain"], WalletInfo>();
+  for (const group of groups) {
+    for (const wallet of group) {
+      latest.set(wallet.chain, wallet);
+    }
+  }
+  const ordered: WalletInfo[] = [];
+  const solana = latest.get("solana");
+  const base = latest.get("base");
+  if (solana) ordered.push(solana);
+  if (base) ordered.push(base);
+  return ordered;
+}
+
+function walletAddressLabel(chain: WalletInfo["chain"]): string {
+  return chain === "solana" ? "Solana trading wallet" : "Base trading wallet";
 }
 
 function readRecords(value: unknown): Record<string, unknown>[] {
@@ -287,7 +325,17 @@ interface SetupFlowState {
   slippageBps?: number;
   strategyText?: string;
   chainStrategies?: Partial<Record<WalletInfo["chain"], string>>;
+  strategyNotes?: Partial<Record<WalletInfo["chain"], string[]>>;
   currentStrategyChain?: WalletInfo["chain"];
+  maxTradeSol?: number;
+  maxTradeUsd?: number;
+}
+
+interface StrategyReview {
+  ready: boolean;
+  summary: string;
+  followUp: string;
+  missing: string[];
   maxTradeSol?: number;
   maxTradeUsd?: number;
 }
@@ -331,6 +379,70 @@ function parseTradeLimits(value: string): { maxTradeSol?: number; maxTradeUsd?: 
   return {
     ...(maxTradeSol !== undefined && Number.isFinite(maxTradeSol) ? { maxTradeSol } : {}),
     ...(maxTradeUsd !== undefined && Number.isFinite(maxTradeUsd) ? { maxTradeUsd } : {}),
+  };
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => typeof item === "string" && item.trim() ? [item.trim()] : []);
+}
+
+function parseStrategyReviewResponse(text: string): StrategyReview | null {
+  const parsed = parseJsonObjectLoose(text);
+  if (!parsed) return null;
+  const ready = parsed.ready === true;
+  const summary = firstString(parsed.summary, parsed.strategy, parsed.normalizedStrategy) ?? "";
+  const followUp = firstString(parsed.followUp, parsed.follow_up, parsed.question) ?? "";
+  const missing = readStringArray(parsed.missing);
+  const limits = parseTradeLimits(summary);
+  const maxTradeSol = firstNumber(parsed, ["maxTradeSol", "max_trade_sol"]) ?? limits.maxTradeSol;
+  const maxTradeUsd = firstNumber(parsed, ["maxTradeUsd", "max_trade_usd"]) ?? limits.maxTradeUsd;
+  return {
+    ready,
+    summary,
+    followUp,
+    missing,
+    ...(maxTradeSol !== undefined ? { maxTradeSol } : {}),
+    ...(maxTradeUsd !== undefined ? { maxTradeUsd } : {}),
+  };
+}
+
+function fallbackStrategyReview(chain: WalletInfo["chain"], notes: string[]): StrategyReview {
+  const summary = notes.join("\n").trim();
+  const limits = parseTradeLimits(summary);
+  const lower = summary.toLowerCase();
+  const missing: string[] = [];
+
+  if (chain === "solana" && limits.maxTradeSol === undefined) {
+    missing.push("max SOL per trade");
+  }
+  if (chain === "base" && limits.maxTradeUsd === undefined) {
+    missing.push("max USD/USDC per trade");
+  }
+  if (!/(entry|filter|hacim|volume|mcap|market cap|holder|liquidity|giris|giriş)/i.test(summary)) {
+    missing.push("entry filters");
+  }
+  if (!/(stop|loss|zarar|sl\b)/i.test(lower)) {
+    missing.push("stop loss");
+  }
+  if (!/(take profit|profit|kar|sat|sell|tp\b|x\b)/i.test(lower)) {
+    missing.push("take profit");
+  }
+  if (!/(max.*position|position|pozisyon|concurrent|ayn[ıi] anda)/i.test(lower)) {
+    missing.push("max open positions");
+  }
+  if (!/(avoid|kaçın|kacin|yasak|alma|blacklist|tokenleri|categories|kategori)/i.test(lower)) {
+    missing.push("avoid rules");
+  }
+
+  return {
+    ready: summary.length >= 20 && missing.length === 0,
+    summary,
+    missing,
+    followUp: missing.length > 0
+      ? `I still need this before live setup: ${missing.join(", ")}. Send only the missing parts; I will merge them.`
+      : "",
+    ...limits,
   };
 }
 
@@ -378,10 +490,12 @@ export class AgentBridge {
   private pendingLoopConfig: AgentLoopConfig | null = null;
   private setupPollTimer: NodeJS.Timeout | null = null;
   private setupFlow: SetupFlowState | null = null;
+  private knownWallets: WalletInfo[] = [];
 
   constructor(config: TuiConfig, setters: StateSetters) {
     this.config = config;
     this.setters = setters;
+    this.knownWallets = this.loadStoredWallets();
 
     // Replay-protected fetch for MCP calls
     this.replayFetch = async (url: string | URL | Request, init?: RequestInit) => {
@@ -511,6 +625,7 @@ export class AgentBridge {
       provider: resolveProviderLabel(this.config.llmProvider, this.config.llmBaseUrl),
       model: this.config.llmModel,
     }));
+    this.syncKnownWalletsToStatus();
 
     // Input is ready now. Setup must be deterministic; do not let an LLM drive it.
     if (setupComplete) {
@@ -531,7 +646,7 @@ export class AgentBridge {
     try {
       const prompt = "Check my portfolio and status, then greet me. Tell me my balance, wallets, and current strategy. Keep it brief and do not narrate tool calls.";
       const reply = await this.chatAgent.chat(
-        prompt,
+        this.withRuntimeContext(prompt),
         (name, result) => {
           this.applyToolResult(name, result);
           if (name !== "setup_agent") {
@@ -583,7 +698,7 @@ export class AgentBridge {
     if (!this.chatAgent) return;
     try {
       const reply = await this.chatAgent.chat(
-        text,
+        this.withRuntimeContext(text),
         (name, result) => {
           this.applyToolResult(name, result);
           this.addSystemMessage(`Tool: ${name}`);
@@ -654,11 +769,63 @@ export class AgentBridge {
       case "slippage":
         return "Set slippage in percent or bps. Examples: 1% = 100 bps, 3% = 300 bps, 5% = 500 bps.";
       case "strategy":
-        return "Send the hard limits and strategy for this chain. Include max trade size, entry filters, stop loss, take profit, max positions, and tokens/categories to avoid.";
+        return "Describe the strategy in natural language. I will review it with AI, ask for missing risk details, and only then ask you to confirm.";
       case "strategy-confirm":
         return "Confirm with 'yes'/'evet', or say 'no'/'hayir' to rewrite the strategy.";
       case "subscriptions":
         return "Create monitoring subscriptions now? For Solana new launches I can enable launch monitoring. Answer yes/evet or no/hayir.";
+    }
+  }
+
+  private setupPromptForStrategyChain(chain: WalletInfo["chain"]): string {
+    const maxTrade = chain === "solana"
+      ? "max SOL per trade"
+      : "max USD/USDC per trade";
+    return [
+      `${chainTitle(chain)} strategy:`,
+      "Describe what you want the agent to trade and how strict it must be.",
+      `Include ${maxTrade}, entry filters, stop loss, take profit, max open positions, and avoid rules.`,
+      "You can write it messy; I will ask follow-ups if anything critical is missing.",
+    ].join("\n");
+  }
+
+  private async reviewStrategyWithAi(
+    chain: WalletInfo["chain"],
+    selectedChains: WalletInfo["chain"][],
+    notes: string[],
+  ): Promise<StrategyReview> {
+    const fallback = fallbackStrategyReview(chain, notes);
+    if (!this.chatAgent) return fallback;
+
+    const unit = chain === "solana" ? "SOL" : "USD/USDC";
+    const systemPrompt = [
+      "You are the strategy-coaching layer inside Balchemy CLI setup.",
+      "You do not call tools. You only decide whether the user's strategy is safe enough to configure.",
+      "Return strict JSON only. No markdown.",
+      "Required JSON shape:",
+      '{"ready":boolean,"summary":"string","missing":["string"],"followUp":"string","maxTradeSol":number|null,"maxTradeUsd":number|null}',
+      `Current chain: ${chainTitle(chain)}. Required max trade unit: ${unit}.`,
+      `Selected chains: ${formatChains(selectedChains)}.`,
+      "A ready strategy must include max trade size, entry filters, stop loss, take profit, max open positions, and avoid/blacklist rules.",
+      "If anything critical is missing, ready=false and followUp must ask only for the missing items in the same language as the user.",
+      "If ready=true, summary must be a faithful normalized version of all user notes with chain-specific limits preserved.",
+    ].join("\n");
+
+    const userMessage = [
+      `Chain: ${chainTitle(chain)}`,
+      "User notes:",
+      notes.map((note, index) => `${index + 1}. ${note}`).join("\n"),
+    ].join("\n\n");
+
+    try {
+      const response = await this.chatAgent.completeText(systemPrompt, userMessage);
+      const parsed = parseStrategyReviewResponse(response);
+      if (!parsed) return fallback;
+      if (!parsed.ready && !parsed.followUp) return fallback;
+      if (parsed.ready && parsed.summary.trim().length < 20) return fallback;
+      return parsed;
+    } catch (_error: unknown) {
+      return fallback;
     }
   }
 
@@ -691,10 +858,13 @@ export class AgentBridge {
           walletAddressConfirm: wallet,
         });
         const masterKey = extractMasterKey(structured);
+        if (masterKey) {
+          this.persistMasterKey(masterKey);
+        }
         this.setupFlow = { step: "networks" };
         this.addAgentMessage(
           masterKey
-            ? `Developer wallet bound.\n\nCopy and store this master key now:\n${masterKey}\n\nIt is shown once in real environments.\n\n${this.setupPromptFor("networks")}`
+            ? `Developer wallet bound.\n\nMaster key saved encrypted locally and shown here so you can copy it externally:\n${masterKey}\n\nIt is shown once in real environments.\n\n${this.setupPromptFor("networks")}`
             : `Developer wallet bound.\n\n${this.setupPromptFor("networks")}`,
         );
         return;
@@ -709,7 +879,9 @@ export class AgentBridge {
         const walletLines: string[] = [];
         for (const chain of chains) {
           const structured = await this.callSetupAgent({ action: "create_wallet", chain });
-          const address = firstString(structured.address, asRecord(structured.wallet)?.address);
+          const wallet = readWallet({ ...structured, chain });
+          if (wallet) this.upsertWallet(wallet);
+          const address = wallet?.address ?? firstString(structured.address, asRecord(structured.wallet)?.address);
           walletLines.push(`${chainTitle(chain)} trading wallet: ${address ?? "(created)"}`);
         }
         this.setupFlow = {
@@ -768,32 +940,73 @@ export class AgentBridge {
         const selectedChains = flow.selectedChains ?? ["solana"];
         const currentStrategyChain = nextStrategyChain(selectedChains, {}) ?? selectedChains[0];
         this.setupFlow = { ...flow, step: "strategy", slippageBps: bps, currentStrategyChain, chainStrategies: {} };
-        this.addAgentMessage(`Slippage set to ${bps} bps.\n\n${chainTitle(currentStrategyChain)} strategy:\n${this.setupPromptFor("strategy")}`);
+        this.addAgentMessage(`Slippage set to ${bps} bps.\n\n${this.setupPromptForStrategyChain(currentStrategyChain)}`);
         return;
       }
 
       if (flow.step === "strategy") {
-        const strategyText = text.trim();
-        if (strategyText.length < 20) {
-          this.addAgentMessage("The strategy is too short. Include limits, entries, exits, max positions, and avoid rules.");
+        const strategyNote = text.trim();
+        const chain = flow.currentStrategyChain ?? (flow.selectedChains ?? ["solana"])[0];
+        if (strategyNote.length < 8) {
+          this.addAgentMessage("That is too short for live setup. Add trade size, entry filters, exits, max positions, or avoid rules.");
           return;
         }
+        const previousNotes = flow.strategyNotes?.[chain] ?? [];
+        const notes = [...previousNotes, strategyNote];
+        const selectedChains = flow.selectedChains ?? [chain];
+        const strategyNotes = {
+          ...(flow.strategyNotes ?? {}),
+          [chain]: notes,
+        };
+        this.setupFlow = { ...flow, strategyNotes };
+
+        const review = await this.reviewStrategyWithAi(chain, selectedChains, notes);
+        if (!review.ready) {
+          const missingLine = review.missing.length > 0 ? `\n\nMissing: ${review.missing.join(", ")}` : "";
+          this.addAgentMessage(`${review.followUp || "I need a little more detail before this can go live."}${missingLine}`);
+          return;
+        }
+
+        const strategyText = review.summary.trim() || notes.join("\n");
+        const parsedLimits = parseTradeLimits(strategyText);
+        const maxTradeSol = chain === "solana"
+          ? review.maxTradeSol ?? parsedLimits.maxTradeSol ?? flow.maxTradeSol
+          : flow.maxTradeSol;
+        const maxTradeUsd = chain === "base"
+          ? review.maxTradeUsd ?? parsedLimits.maxTradeUsd ?? flow.maxTradeUsd
+          : flow.maxTradeUsd;
         const chainStrategies = {
           ...(flow.chainStrategies ?? {}),
-          ...(flow.currentStrategyChain ? { [flow.currentStrategyChain]: strategyText } : {}),
+          [chain]: strategyText,
         };
-        const selectedChains = flow.selectedChains ?? (flow.currentStrategyChain ? [flow.currentStrategyChain] : ["solana"]);
         const nextChain = nextStrategyChain(selectedChains, chainStrategies);
         if (nextChain) {
-          this.setupFlow = { ...flow, chainStrategies, currentStrategyChain: nextChain };
-          this.addAgentMessage(`${chainTitle(flow.currentStrategyChain ?? selectedChains[0])} strategy saved.\n\n${chainTitle(nextChain)} strategy:\n${this.setupPromptFor("strategy")}`);
+          this.setupFlow = {
+            ...flow,
+            chainStrategies,
+            currentStrategyChain: nextChain,
+            strategyNotes,
+            ...(maxTradeSol !== undefined ? { maxTradeSol } : {}),
+            ...(maxTradeUsd !== undefined ? { maxTradeUsd } : {}),
+          };
+          this.addAgentMessage(`${chainTitle(chain)} strategy drafted with AI review.\n\n${this.setupPromptForStrategyChain(nextChain)}`);
           return;
         }
         const combinedStrategy = buildCombinedStrategy({ ...flow, chainStrategies });
-        const limits = parseTradeLimits(combinedStrategy);
-        this.setupFlow = { ...flow, ...limits, chainStrategies, step: "strategy-confirm", strategyText: combinedStrategy };
+        const combinedLimits = parseTradeLimits(combinedStrategy);
+        const finalMaxTradeSol = maxTradeSol ?? combinedLimits.maxTradeSol;
+        const finalMaxTradeUsd = maxTradeUsd ?? combinedLimits.maxTradeUsd;
+        this.setupFlow = {
+          ...flow,
+          chainStrategies,
+          strategyNotes,
+          step: "strategy-confirm",
+          strategyText: combinedStrategy,
+          ...(finalMaxTradeSol !== undefined ? { maxTradeSol: finalMaxTradeSol } : {}),
+          ...(finalMaxTradeUsd !== undefined ? { maxTradeUsd: finalMaxTradeUsd } : {}),
+        };
         this.addAgentMessage(
-          `Review before live configuration:\n\n${combinedStrategy}\n\nMax SOL/trade: ${limits.maxTradeSol ?? "not specified"}\nMax USD/trade: ${limits.maxTradeUsd ?? "not specified"}\n\n${this.setupPromptFor("strategy-confirm")}`,
+          `AI-reviewed strategy draft:\n\n${combinedStrategy}\n\nMax SOL/trade: ${finalMaxTradeSol ?? "not specified"}\nMax USD/trade: ${finalMaxTradeUsd ?? "not specified"}\n\n${this.setupPromptFor("strategy-confirm")}`,
         );
         return;
       }
@@ -809,7 +1022,7 @@ export class AgentBridge {
             chainStrategies: {},
             currentStrategyChain: (flow.selectedChains ?? ["solana"])[0],
           };
-          this.addAgentMessage(this.setupPromptFor("strategy"));
+          this.addAgentMessage(this.setupPromptForStrategyChain((flow.selectedChains ?? ["solana"])[0]));
           return;
         }
         if (!isAffirmative(text)) {
@@ -818,7 +1031,7 @@ export class AgentBridge {
         }
         if (!flow.strategyText) {
           this.setupFlow = { ...flow, step: "strategy" };
-          this.addAgentMessage(this.setupPromptFor("strategy"));
+          this.addAgentMessage(this.setupPromptForStrategyChain(flow.currentStrategyChain ?? (flow.selectedChains ?? ["solana"])[0]));
           return;
         }
         await this.callSetupAgent({
@@ -883,18 +1096,15 @@ export class AgentBridge {
 
     if (name === "setup_agent") {
       const structured = asRecord(parsed.structured) ?? parsed;
-      const wallets = collectWallets(structured);
-      if (wallets.length > 0) {
-        this.setters.setStatus((prev) => ({
-          ...prev,
-          wallets: mergeWallets(prev.wallets, wallets),
-        }));
-      }
       if (structured.action === "create_wallet") {
         const chain = normalizeChain(structured.chain);
-        const address = typeof structured.address === "string" ? structured.address : undefined;
-        if (chain && address) {
-          this.upsertWallet({ chain, address });
+        const wallet = chain ? readWallet({ ...structured, chain }) : null;
+        if (wallet) {
+          this.upsertWallet(wallet);
+        }
+      } else if (structured.action === "get_status" || structured.action === "status") {
+        for (const wallet of collectWallets(structured)) {
+          this.upsertWallet(wallet);
         }
       }
       return;
@@ -919,20 +1129,82 @@ export class AgentBridge {
       ?? summed.balanceUsd;
     const positions = collectPositions(data ?? snapshot);
 
+    for (const wallet of wallets) {
+      this.upsertWallet(wallet);
+    }
+
     this.setters.setStatus((prev) => ({
       ...prev,
       ...(balanceSol !== undefined ? { balanceSol } : {}),
       ...(balanceUsd !== undefined ? { balanceUsd } : {}),
-      ...(wallets.length > 0 ? { wallets: mergeWallets(prev.wallets, wallets) } : {}),
       ...(positions ? { activeTrades: positions } : {}),
     }));
   }
 
   private upsertWallet(wallet: WalletInfo): void {
+    this.knownWallets = mergeLatestWallets(this.knownWallets, [wallet]);
+    this.persistWallet(wallet);
     this.setters.setStatus((prev) => {
       const wallets = prev.wallets.filter((existing) => existing.chain !== wallet.chain);
       return { ...prev, wallets: [...wallets, wallet] };
     });
+  }
+
+  private loadStoredWallets(): WalletInfo[] {
+    const agent = loadAgent();
+    if (!agent || agent.publicId !== this.config.publicId) return [];
+    const wallets: WalletInfo[] = [];
+    if (agent.wallets?.solana) wallets.push({ chain: "solana", address: agent.wallets.solana });
+    if (agent.wallets?.base) wallets.push({ chain: "base", address: agent.wallets.base });
+    return wallets;
+  }
+
+  private syncKnownWalletsToStatus(): void {
+    if (this.knownWallets.length === 0) return;
+    this.setters.setStatus((prev) => ({
+      ...prev,
+      wallets: mergeLatestWallets(prev.wallets, this.knownWallets),
+    }));
+  }
+
+  private persistActiveAgent(update: (agent: StoredAgent) => StoredAgent): void {
+    const agent = loadAgent();
+    if (!agent || agent.publicId !== this.config.publicId) return;
+    saveAgent(update(agent));
+  }
+
+  private persistMasterKey(masterKey: string): void {
+    this.persistActiveAgent((agent) => ({
+      ...agent,
+      masterKey,
+    }));
+  }
+
+  private persistWallet(wallet: WalletInfo): void {
+    this.persistActiveAgent((agent) => {
+      const wallets = { ...(agent.wallets ?? {}) };
+      wallets[wallet.chain] = wallet.address;
+      return {
+        ...agent,
+        wallets,
+      };
+    });
+  }
+
+  private buildRuntimeContext(): string {
+    if (this.knownWallets.length === 0) return "";
+    return [
+      "Known Balchemy runtime context from local encrypted CLI state:",
+      ...this.knownWallets.map((wallet) => `${walletAddressLabel(wallet.chain)}: ${wallet.address}`),
+      "Funding rule: fund the Solana trading wallet with SOL. Fund the Base trading wallet with ETH on Base for gas and Base-chain capital as required.",
+      "If the user asks where to fund, answer from these addresses.",
+    ].join("\n");
+  }
+
+  private withRuntimeContext(userMessage: string): string {
+    const context = this.buildRuntimeContext();
+    if (!context) return userMessage;
+    return `${context}\n\nUser message:\n${userMessage}`;
   }
 
   private async ensureDefaultSubscriptions(): Promise<void> {
