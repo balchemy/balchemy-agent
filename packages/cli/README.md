@@ -3,8 +3,8 @@
 </h1>
 
 <p align="center">
-  <strong>Autonomous AI Trading Agent Platform</strong><br/>
-  Deploy a dual-LLM trading agent on Solana and EVM chains in 5 minutes.
+  <strong>Balchemy CLI</strong><br/>
+  Initialize a local trading agent, connect model credentials, set risk rules, and generate deployment files.
 </p>
 
 <p align="center">
@@ -17,20 +17,20 @@
 
 ---
 
-## What Is Balchemy?
+## What Balchemy Does
 
-Balchemy is an autonomous AI trading platform that connects your LLM to on-chain markets through the Model Context Protocol (MCP). You provide the strategy in natural language; your LLM decides when and what to trade; Balchemy handles wallets, execution, risk checks, and 100+ trading tools.
+Balchemy connects an external LLM to on-chain markets through MCP. The outer LLM
+chooses tools and instructions. Balchemy applies scopes, behavior rules, risk
+checks, execution, and records.
 
-**Architecture — Dual-LLM System:**
-- **External LLM** (your choice: Claude, GPT, Gemini, Grok, OpenRouter) — the brain that makes all decisions
-- **Inner LLM** (GPT-5.4-mini, server-side) — infrastructure servant that fetches data, formats responses, and serves the external LLM
+The inner LLM is infrastructure support. It fetches data and formats responses.
+It does not make trading decisions.
 
-Your LLM calls Balchemy tools via MCP — it picks the right tool from natural language descriptions, not hardcoded tool names.
-
-```
-You (strategy) → External LLM (decisions) → Balchemy MCP (execution) → Solana / Base / Ethereum
-                                  ↓
-                        Inner LLM (data fetching, formatting)
+```text
+Strategy -> external LLM -> Balchemy MCP -> policy -> execution -> record
+                                  |
+                                  v
+                         inner LLM support
 ```
 
 ## Quick Start
@@ -39,144 +39,185 @@ You (strategy) → External LLM (decisions) → Balchemy MCP (execution) → Sol
 npx balchemy
 ```
 
-The interactive wizard walks you through:
-1. **Pick your LLM** — Anthropic, OpenAI, Gemini, Grok, or OpenRouter
-2. **Set up wallets** — auto-provisioned Solana and EVM wallets
-3. **Define your strategy** — natural language rules ("max 5% position size, only trade on Solana")
-4. **Start the 24/7 agent loop** — your LLM monitors markets and trades autonomously
+The wizard handles five local steps:
+
+1. Choose an LLM provider.
+2. Add the provider API key.
+3. Set wallet and chain preferences.
+4. Define behavior rules in plain language.
+5. Start or export the agent runtime.
+
+## Commands
 
 ```bash
-npx balchemy          # Setup wizard or resume cached agent
-npx balchemy init      # Force new setup wizard
-npx balchemy start     # Start from agent.config.yaml
-npx balchemy docker    # Generate Docker files for deployment
+npx balchemy              # Setup wizard or resume cached agent
+npx balchemy init         # New setup wizard
+npx balchemy start        # Start from agent.config.yaml
+npx balchemy list         # List saved agents
+npx balchemy docker       # Generate Docker files
+npx balchemy --help       # Usage
+npx balchemy --version    # Version
+npx balchemy --no-color   # Disable color output
 ```
 
-## What You Can Do
+`NO_COLOR=1` also disables colored output.
 
-### Trade
-- **Buy/Sell tokens** — `buy 0.1 SOL worth of BONK on Solana`
-- **Limit orders** — set price targets, get filled automatically
-- **DCA (Dollar-Cost Averaging)** — schedule recurring buys
-- **Trailing stops** — lock profits as price moves
+## Files Written
 
-### Research
-- **Token analysis** — market cap, volume, holder distribution, risk scores
-- **Smart money tracking** — follow profitable wallets
-- **Bundle detection** — spot insider token launches
-- **Price queries** — real-time Solana and EVM token prices
-
-### Manage
-- **Portfolio view** — see balances, P&L, positions across chains
-- **Behavior rules** — define trading constraints in natural language
-- **Subscriptions** — set up alerts for market events
-- **24/7 autonomous loop** — your LLM monitors and acts even when you're away
-
-### Risk Management (Built-In)
-Every trade passes through multi-layer safety checks before execution:
-- **RugCheck integration** — community risk scores
-- **Honeypot detection** — simulated sell before buying
-- **Contract verification** — liquidity locks, ownership renouncing
-- **Behavior rules enforcement** — your constraints are always respected
-
-## 100+ MCP Tools
-
-Your LLM accesses Balchemy through these primary agent-facing tools:
-
-| Tool | What It Does |
-|------|-------------|
-| `trade_command` | Execute buy/sell/swap on Solana or EVM |
-| `ask_bot` | Natural language market queries (inner LLM-powered) |
-| `agent_research` | Deep token research with technical analysis |
-| `agent_portfolio` | Portfolio, positions, P&L overview |
-| `configure_behavior_rules` | Set trading constraints in natural language |
-| `get_behavior_rules` | Read current active rules |
-| `create_subscription` | Set up market event alerts |
-| `setup_agent` | Wallet provisioning and onboarding |
-
-Plus 90+ internal tools for research, risk scoring, and execution — your LLM picks the right one from descriptions.
-
-## LLM Providers
-
-| Provider | Environment Variable | Notes |
-|-----------|---------------------|-------|
-| Anthropic | `ANTHROPIC_API_KEY` | Haiku 4.5, Sonnet 4.6, Opus 4.6+ |
-| OpenAI | `OPENAI_API_KEY` | GPT-4o, GPT-5.4, etc. |
-| Google Gemini | `GEMINI_API_KEY` | Gemini 3.1 Pro, Flash |
-| Google Vertex AI | `GOOGLE_APPLICATION_CREDENTIALS` | Gemini 3.1 Pro via Vertex AI |
-| xAI Grok | `GROK_API_KEY` | Grok-4-1-fast for research |
-| OpenRouter | `OPENROUTER_API_KEY` | Access to 100+ models |
-
-## Configuration
-
-After setup, `agent.config.yaml` and `.env` are generated in the current directory:
+The CLI writes local runtime files in the current directory.
 
 ```yaml
 # agent.config.yaml
 llm:
   provider: anthropic
-  model: claude-sonnet-4-20250514
+  model: selected-in-wizard
 
 agent:
   name: my-trading-agent
-  strategy: Focus on Solana memecoins with high volume and positive sentiment
+  strategy: Focus on liquid markets. Keep position size below 5%.
 
 wallets:
   solana:
     chain: solana
   evm:
-    chainId: 8453  # Base
+    chainId: 8453
 ```
 
-Edit these files to change settings without re-running the wizard.
+Secrets belong in `.env`. Do not commit that file.
 
-## 24/7 Autonomous Mode
+## What You Can Do
 
-The SDK includes an `AgentLoop` that keeps your LLM connected to Balchemy permanently:
+### Trade
+
+- Buy and sell on Solana and EVM chains.
+- Create limit orders.
+- Schedule DCA rules.
+- Use trailing stops.
+
+### Research
+
+- Query token price, liquidity, volume, and holder distribution.
+- Check risk signals before a trade.
+- Track wallets and market events.
+- Compare positions across chains.
+
+### Manage
+
+- View portfolio, balances, positions, and PnL.
+- Define behavior rules in natural language.
+- Subscribe to market events.
+- Rotate scoped MCP keys in Hub.
+
+## Risk Model
+
+Every trade path is expected to pass risk checks before execution:
+
+- RugCheck signals.
+- Honeypot simulation.
+- Contract and liquidity checks.
+- Behavior rule enforcement.
+- Scoped MCP permissions.
+
+The wallet remains the authority. Keep private keys and seed phrases out of
+source, logs, screenshots, and prompts.
+
+## MCP Tools
+
+The CLI connects agents to the curated agent-facing MCP surface.
+
+| Tool | Purpose |
+| --- | --- |
+| `trade_command` | Buy, sell, or swap through the approved execution path |
+| `ask_bot` | Natural language market query support |
+| `agent_research` | Token and market research |
+| `agent_portfolio` | Portfolio, positions, and PnL |
+| `configure_behavior_rules` | Trading constraints in natural language |
+| `get_behavior_rules` | Current active rules |
+| `create_subscription` | Market event subscription |
+| `setup_agent` | Onboarding and runtime setup |
+
+Granular internal tools stay hidden unless the platform enables them for a bot.
+
+## LLM Providers
+
+| Provider | Environment variable |
+| --- | --- |
+| Anthropic | `ANTHROPIC_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| Google Gemini | `GEMINI_API_KEY` |
+| Google Vertex AI | `GOOGLE_APPLICATION_CREDENTIALS` |
+| xAI Grok | `GROK_API_KEY` |
+| OpenRouter | `OPENROUTER_API_KEY` |
+
+Pick the model in the wizard or edit `agent.config.yaml`.
+
+## Runtime Mode
+
+The SDK includes an `AgentLoop` for long-running agents.
 
 ```ts
-import { BalchemyAgentSdk, AgentLoop } from "@balchemyai/agent-sdk";
+import { AgentLoop, BalchemyAgentSdk } from "@balchemyai/agent-sdk";
 
-const sdk = new BalchemyAgentSdk({ apiBaseUrl: "https://api.balchemy.ai/api" });
-const loop = new AgentLoop(sdk, { apiKey: "your-mcp-api-key" });
+const sdk = new BalchemyAgentSdk({
+  apiBaseUrl: "https://api.balchemy.ai/api",
+});
 
-// Starts SSE event stream + polling cycle
-// Your LLM receives market events and decides whether to act
+const loop = new AgentLoop(sdk, {
+  apiKey: "your-mcp-api-key",
+});
+
 await loop.start();
 ```
 
-Events flow: Market event → SSE push → Your LLM evaluates → `trade_command` if relevant → Execution → Confirmation push
+Event flow:
 
-## Hub Integration
+```text
+Market event -> SSE -> external LLM evaluates -> MCP tool call -> execution -> confirmation
+```
 
-When you bind your EVM wallet during setup, your agent appears in your [Balchemy Hub](https://balchemy.ai/hub) dashboard:
-- **Monitor** — live portfolio, trade history, event log
-- **API Keys** — create, rotate, and revoke MCP keys with scoped permissions
-- **Scope Management** — `read` for data-only, `trade` for full execution
-- **Wallet Management** — link/unlink Solana and EVM wallets
+## Hub
+
+Agents registered through the CLI appear in [Balchemy Hub](https://balchemy.ai/hub).
+
+- Monitor portfolio, trade history, and event logs.
+- Create, rotate, and revoke MCP keys.
+- Keep `read` and `trade` scopes separate.
+- Link Solana and EVM wallets.
 
 ## Security
 
-- **Encrypted credentials** — AES-256-GCM at rest with PBKDF2 key derivation
-- **Scoped API keys** — `read` and `trade` permissions, instant revocation
-- **No seed phrases stored** — all keys encrypted, never logged
-- **Behavior rules** — hard constraints that even your LLM cannot override
-- **Pre-trade safety checks** — RugCheck, honeypot detection, contract verification
+- Credentials are encrypted at rest.
+- MCP keys are scoped and revocable.
+- Behavior rules constrain execution.
+- Pre-trade checks run before approved execution.
+- Seed phrases should never be stored in source or logs.
+
+## TUI Shortcuts
+
+| Shortcut | Action |
+| --- | --- |
+| `^S` | Open settings |
+| `^L` | Clear chat history |
+| `^N` | New agent |
+| `^Q` | Quit |
+| `PgUp/PgDn` | Scroll message history |
+| `Esc` | Go back |
 
 ## Requirements
 
 - Node.js 18+
-- An LLM API key from any supported provider
+- One supported LLM provider key
 
 ## Links
 
-- **Platform:** [balchemy.ai](https://balchemy.ai)
-- **Documentation:** [balchemy.ai/hub/docs](https://balchemy.ai/hub/docs)
-- **Agent Explorer:** [balchemy.ai/explorer](https://balchemy.ai/explorer)
-- **GitHub:** [github.com/balchemy/balchemy-agent](https://github.com/balchemy/balchemy-agent)
-- **npm:** [balchemy](https://www.npmjs.com/package/balchemy) · [@balchemyai/agent-sdk](https://www.npmjs.com/package/@balchemyai/agent-sdk)
-- **X:** [@balchemyai](https://x.com/balchemyai)
-- **Contact:** [burak@balchemy.ai](mailto:burak@balchemy.ai)
+- [Platform](https://balchemy.ai)
+- [Documentation](https://balchemy.ai/hub/docs)
+- [Agent Explorer](https://balchemy.ai/explorer)
+- [GitHub](https://github.com/balchemy/balchemy-agent)
+- [npm: balchemy](https://www.npmjs.com/package/balchemy)
+- [npm: @balchemyai/agent-sdk](https://www.npmjs.com/package/@balchemyai/agent-sdk)
+- [X: @balchemyai](https://x.com/balchemyai)
+- [Contact](mailto:burak@balchemy.ai)
 
 ## License
 

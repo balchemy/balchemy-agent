@@ -4,13 +4,14 @@ import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { Select, TextInput } from "@inkjs/ui";
 import { ChatPanel } from "./ChatPanel.js";
 import { StatusPanel } from "./StatusPanel.js";
+import { SecretInput } from "./SecretInput.js";
 import { AgentBridge } from "./AgentBridge.js";
 import {
   clearAgent,
   loadAgent,
   saveAgent,
 } from "../agent-store.js";
-import type { ChatMessage, StatusData, TuiConfig } from "./types.js";
+import type { ChatMessage, StatusData, TradeConfirmationDetails, TuiConfig } from "./types.js";
 import { randomUUID } from "node:crypto";
 import { getSessionBadge } from "./status-view.js";
 import {
@@ -18,6 +19,7 @@ import {
   toTuiConfig,
 } from "./session-sync.js";
 import { truncateEnd, truncateMiddle } from "./text-layout.js";
+import { resolveProviderLabel } from "./utils.js";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -38,7 +40,7 @@ const INITIAL_STATUS: StatusData = {
 
 // ── Settings definitions ─────────────────────────────────────────────────────
 
-type AppMode = "chat" | "settings-select" | "settings-edit-select" | "settings-edit-text" | "settings-edit-apikey";
+type AppMode = "chat" | "help" | "settings-select" | "settings-edit-select" | "settings-edit-text" | "settings-edit-apikey";
 
 interface SettingItem {
   key: string;
@@ -62,14 +64,6 @@ function compactId(value: string, head = 10, tail = 5): string {
   return truncateMiddle(value, head + tail + 3);
 }
 
-function resolveProviderLabel(provider: string, baseUrl?: string): string {
-  if (provider === "anthropic") return "anthropic";
-  if (baseUrl?.includes("generativelanguage.googleapis.com")) return "gemini";
-  if (baseUrl?.includes("api.x.ai")) return "grok";
-  if (baseUrl?.includes("openrouter.ai")) return "openrouter";
-  return "openai";
-}
-
 function HeaderBadge({
   label,
   tone,
@@ -90,6 +84,23 @@ function HeaderBadge({
       {" "}
       {label}
       {" "}
+    </Text>
+  );
+}
+
+function KeyHelpRow({
+  keys,
+  label,
+  width,
+}: {
+  keys: string;
+  label: string;
+  width: number;
+}): React.ReactElement {
+  return (
+    <Text>
+      <Text color="cyan" bold>{keys.padEnd(13)}</Text>
+      <Text dimColor>{truncateEnd(label, Math.max(8, width - 13))}</Text>
     </Text>
   );
 }
@@ -120,6 +131,7 @@ export function App({ config }: AppProps): React.ReactElement {
     maxDailyLlmCost: config.maxDailyLlmCost ?? 5,
   });
   const [inputActive, setInputActive] = useState(false);
+  const [thinking, setThinking] = useState(false);
   const bridgeRef = useRef<AgentBridge | null>(null);
 
   // Settings state
@@ -134,7 +146,7 @@ export function App({ config }: AppProps): React.ReactElement {
 
   // Trade confirmation state
   const [tradeConfirm, setTradeConfirm] = useState<{
-    preview: string;
+    details: TradeConfirmationDetails;
     resolve: (confirmed: boolean) => void;
   } | null>(null);
   const [confirmKey, setConfirmKey] = useState(0);
@@ -155,22 +167,29 @@ export function App({ config }: AppProps): React.ReactElement {
   }, [addMessage]);
 
   // Trade confirmation callback
-  const confirmTrade = useCallback((preview: string): Promise<boolean> => {
+  const confirmTrade = useCallback((details: TradeConfirmationDetails): Promise<boolean> => {
     return new Promise((resolve) => {
-      setTradeConfirm({ preview, resolve });
+      setTradeConfirm({ details, resolve });
       setConfirmKey((k) => k + 1);
     });
   }, []);
 
   const handleConfirmInput = useCallback((value: string) => {
-    const yes = value.toLowerCase() === "y" || value.toLowerCase() === "yes";
-    if (tradeConfirm) {
-      if (yes) {
-        addMessage({ id: randomUUID(), type: "trade", text: `Confirmed: ${tradeConfirm.preview}`, timestamp: Date.now() });
-      } else {
-        addSystemMsg(`Cancelled: ${tradeConfirm.preview}`);
-      }
-      tradeConfirm.resolve(yes);
+    const normalized = value.trim().toUpperCase();
+    const approved = normalized === "TRADE";
+    const rejected = normalized === "N" || normalized === "NO" || normalized === "CANCEL" || normalized === "IPTAL";
+    if (!tradeConfirm) return;
+
+    if (approved) {
+      addMessage({ id: randomUUID(), type: "trade", text: `Confirmed: ${tradeConfirm.details.preview}`, timestamp: Date.now() });
+      tradeConfirm.resolve(true);
+      setTradeConfirm(null);
+      return;
+    }
+
+    if (rejected || normalized.length > 0) {
+      addSystemMsg(`Cancelled: ${tradeConfirm.details.preview}`);
+      tradeConfirm.resolve(false);
       setTradeConfirm(null);
     }
   }, [tradeConfirm, addMessage, addSystemMsg]);
@@ -178,7 +197,7 @@ export function App({ config }: AppProps): React.ReactElement {
   // ── Bridge startup ──────────────────────────────────────────────────────
 
   useEffect(() => {
-    const bridge = new AgentBridge(config, { addMessage, setStatus, confirmTrade });
+    const bridge = new AgentBridge(config, { addMessage, setStatus, confirmTrade, setThinking });
     bridgeRef.current = bridge;
 
     bridge.start().then(() => {
@@ -206,7 +225,14 @@ export function App({ config }: AppProps): React.ReactElement {
   // ── Keyboard shortcuts ──────────────────────────────────────────────────
 
   useInput((input, key) => {
-    if (tradeConfirm) return;
+    if (tradeConfirm) {
+      if (key.escape) {
+        addSystemMsg(`Cancelled: ${tradeConfirm.details.preview}`);
+        tradeConfirm.resolve(false);
+        setTradeConfirm(null);
+      }
+      return;
+    }
     if (key.backspace || key.delete) return;
 
     const mode = appModeRef.current;
@@ -220,11 +246,22 @@ export function App({ config }: AppProps): React.ReactElement {
       } else if (mode === "settings-select") {
         setAppMode("chat");
         addSystemMsg("Settings closed.");
+      } else if (mode === "help") {
+        setAppMode("chat");
       }
       return;
     }
 
-    // Only handle shortcuts in chat mode — let Select/TextInput handle keys in settings
+    if (input === "?" && mode === "chat") {
+      setAppMode("help");
+      return;
+    }
+    if (input === "?" && mode === "help") {
+      setAppMode("chat");
+      return;
+    }
+
+    // Only handle shortcuts in chat mode — let Select/TextInput handle keys in settings/help
     if (mode !== "chat") return;
 
     if (input === "s" && key.ctrl) {
@@ -481,8 +518,10 @@ export function App({ config }: AppProps): React.ReactElement {
 
   // ── Render ──────────────────────────────────────────────────────────────
 
-  const inSettings = appMode !== "chat";
-  const chatInputActive = inputActive && !tradeConfirm && !inSettings;
+  const inSettings = appMode !== "chat" && appMode !== "help";
+  const helpVisible = appMode === "help";
+  const overlayVisible = inSettings || helpVisible || Boolean(tradeConfirm);
+  const chatInputActive = inputActive && !tradeConfirm && !inSettings && !helpVisible;
   const providerLabel = status.provider ?? resolveProviderLabel(config.llmProvider, config.llmBaseUrl);
   const headerModel = status.model ?? config.llmModel ?? "default";
   const headerSpend = `$${status.llmCostToday.toFixed(2)} / $${status.maxDailyLlmCost.toFixed(2)}`;
@@ -495,7 +534,7 @@ export function App({ config }: AppProps): React.ReactElement {
       : status.sseConnected
       ? "live"
       : "warning";
-  const overlayHeight = inSettings || tradeConfirm ? 7 : 0;
+  const overlayHeight = overlayVisible ? 7 : 0;
   const mainHeight = Math.max(compactLayout ? 12 : 14, termHeight - (compactLayout ? 10 : 8) - overlayHeight);
   const statusPanelHeight = compactLayout ? Math.min(10, Math.max(7, Math.floor(mainHeight * 0.4))) : mainHeight;
   const activityHeight = compactLayout ? Math.max(6, mainHeight - statusPanelHeight - 1) : mainHeight;
@@ -508,8 +547,8 @@ export function App({ config }: AppProps): React.ReactElement {
   );
   const shortcutLine = truncateEnd(
     `${compactLayout
-      ? "Commands  ^S settings  ^L clear  ^Q quit"
-      : "Commands  ^S settings  ^L clear  ^N new  ^Q quit"}${inSettings ? "  ESC back" : ""}`,
+      ? "^S settings  ? help  ^L clear  ^Q quit  PgUp/PgDn scroll"
+      : "^S settings  ? help  ^L clear  ^N new  ^Q quit  PgUp/PgDn scroll"}${overlayVisible ? "  ESC back" : ""}`,
     overlayContentWidth,
   );
 
@@ -531,6 +570,12 @@ export function App({ config }: AppProps): React.ReactElement {
               <>
                 <Text> </Text>
                 <HeaderBadge label="SETTINGS" tone="warning" />
+              </>
+            )}
+            {helpVisible && (
+              <>
+                <Text> </Text>
+                <HeaderBadge label="HELP" tone="warning" />
               </>
             )}
           </Box>
@@ -565,14 +610,30 @@ export function App({ config }: AppProps): React.ReactElement {
             messages={messages}
             onSend={handleSend}
             inputActive={chatInputActive}
-            hideInput={inSettings || Boolean(tradeConfirm)}
+            hideInput={overlayVisible}
             pageSize={chatPageSize}
             inputPlaceholder="Ask, adjust rules, or inspect this session..."
             width={chatPanelWidth}
+            thinking={thinking}
           />
         </Box>
         {!compactLayout && <StatusPanel status={status} width={statusWidth} compact={compactLayout} height={statusPanelHeight} />}
       </Box>
+
+      {/* Help panel — replaces input area when active */}
+      {helpVisible && (
+        <Box borderStyle="round" borderColor="cyan" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth}>
+          <Box marginBottom={0}>
+            <Text color="white" bold>Keyboard Help</Text>
+            {!compactLayout && <Text dimColor>  cockpit shortcuts and safety controls</Text>}
+          </Box>
+          <KeyHelpRow keys="Ctrl+S" label="Open session settings for provider, model, limits, slippage and strategy." width={overlayContentWidth} />
+          <KeyHelpRow keys="Ctrl+L" label="Clear visible chat activity without changing agent state." width={overlayContentWidth} />
+          {!compactLayout && <KeyHelpRow keys="Ctrl+N" label="Return to launcher and choose or create another saved agent." width={overlayContentWidth} />}
+          <KeyHelpRow keys="PgUp/PgDn" label="Scroll activity history while keeping new events stable." width={overlayContentWidth} />
+          <KeyHelpRow keys="Esc / ?" label="Close this panel; trade prompts only execute when you type TRADE." width={overlayContentWidth} />
+        </Box>
+      )}
 
       {/* Settings panel — replaces input area when active */}
       {appMode === "settings-select" && (
@@ -619,9 +680,9 @@ export function App({ config }: AppProps): React.ReactElement {
           <Box>
             <Text color="yellow" bold>Key</Text>
             <Text dimColor>  </Text>
-            <TextInput
+            <SecretInput
               key={settingsInputKey}
-              placeholder="sk-... or key-..."
+              placeholder="paste key; it will stay masked"
               onSubmit={handleApiKeyValue}
             />
           </Box>
@@ -630,20 +691,30 @@ export function App({ config }: AppProps): React.ReactElement {
 
       {/* Trade confirmation overlay */}
       {tradeConfirm && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth}>
+        <Box borderStyle="round" borderColor="red" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth}>
           <Box marginBottom={1}>
-            <HeaderBadge label="TRADE CHECK" tone="warning" />
+            <HeaderBadge label="TRADE CHECK" tone="danger" />
             {!compactLayout && <Text dimColor>  review before live execution</Text>}
           </Box>
-          <Text color="white" wrap="wrap">{tradeConfirm.preview}</Text>
-          <Box marginTop={1}>
-            <Text color="yellow" bold>Approve</Text>
-            <Text dimColor>  type y or n</Text>
+          <Text color="white" wrap="wrap">{tradeConfirm.details.preview}</Text>
+          <Box flexDirection="column" marginTop={1}>
+            <Text dimColor>Agent  {truncateMiddle(config.publicId, 28)}</Text>
+            <Text dimColor>Host   {truncateMiddle(config.mcpEndpoint, 42)}</Text>
+            <Text dimColor>Scope  MCP call through Balchemy execution guard</Text>
+            <Text dimColor>Mode   {config.shadowMode ? "shadow / no live order" : "LIVE / broadcasts if approved"}</Text>
+            <Text dimColor>Chain  {tradeConfirm.details.chain}</Text>
+            <Text dimColor>Intent {truncateEnd(tradeConfirm.details.intent, 52)}</Text>
+            <Text dimColor>Token  {truncateMiddle(tradeConfirm.details.token, 52)}</Text>
+            <Text dimColor>Amount {tradeConfirm.details.amount}</Text>
+          </Box>
+          <Box marginTop={1} flexDirection="column">
+            <Text color="yellow" bold>Approve only if agent, host, chain, token and amount all match your intent.</Text>
+            <Text dimColor>Type TRADE to execute through MCP, or anything else to cancel.</Text>
           </Box>
           <Box marginTop={1}>
             <TextInput
               key={confirmKey}
-              placeholder="y or n"
+              placeholder="TRADE or cancel"
               onSubmit={handleConfirmInput}
             />
           </Box>

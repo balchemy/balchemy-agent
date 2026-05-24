@@ -13,6 +13,7 @@
 
 import { randomUUID } from "node:crypto";
 import type { BalchemyMcpClient } from "@balchemyai/agent-sdk";
+import type { TradeConfirmationDetails } from "./types.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -114,7 +115,7 @@ export class ChatAgent {
   async chat(
     userMessage: string,
     onToolCall?: (name: string, result: string) => void,
-    confirmTrade?: (preview: string, args: Record<string, unknown>) => Promise<boolean>,
+    confirmTrade?: (details: TradeConfirmationDetails) => Promise<boolean>,
   ): Promise<string> {
     return this.enqueueChat(() => this.runChat(userMessage, onToolCall, confirmTrade));
   }
@@ -143,14 +144,14 @@ export class ChatAgent {
   private async runChat(
     userMessage: string,
     onToolCall?: (name: string, result: string) => void,
-    confirmTrade?: (preview: string, args: Record<string, unknown>) => Promise<boolean>,
+    confirmTrade?: (details: TradeConfirmationDetails) => Promise<boolean>,
   ): Promise<string> {
     this.history.push({ role: "user", content: userMessage });
 
     // Loop: call LLM → if tool calls, execute them → feed back → repeat
     const MAX_ROUNDS = 10;
     for (let round = 0; round < MAX_ROUNDS; round++) {
-      const response = await this.callLlm();
+      const response = await this.withRetry(() => this.callLlm());
 
       if (!response.toolCalls || response.toolCalls.length === 0) {
         // Pure text response — done
@@ -179,11 +180,22 @@ export class ChatAgent {
         // Intercept trade_command for confirmation
         if (tc.function.name === "trade_command" && confirmTrade) {
           const intent = String(args.intent ?? args.message ?? "trade");
-          const token = String(args.token ?? "").slice(0, 12);
-          const amount = String(args.amount ?? "?");
-          const preview = `${intent.toUpperCase()} ${amount} SOL → ${token || "unknown"}`;
+          const action = String(args.action ?? args.side ?? args.intent ?? "trade");
+          const token = String(args.token ?? args.tokenMint ?? args.tokenAddress ?? args.mint ?? "unknown");
+          const amount = String(args.amount ?? args.size ?? args.solAmount ?? args.usdAmount ?? "?");
+          const chain = String(args.chain ?? args.network ?? "unknown");
+          const unit = chain.toLowerCase().includes("base") ? "USD/USDC" : "SOL";
+          const preview = `${action.toUpperCase()} ${amount} ${unit} → ${token.slice(0, 18)}`;
 
-          const confirmed = await confirmTrade(preview, args);
+          const confirmed = await confirmTrade({
+            preview,
+            intent,
+            action,
+            token,
+            amount,
+            chain,
+            rawArgs: args,
+          });
           if (!confirmed) {
             resultText = "Trade cancelled by user.";
             onToolCall?.(tc.function.name, resultText);
@@ -214,13 +226,50 @@ export class ChatAgent {
     return "I hit the tool-call limit. Please try a simpler request.";
   }
 
+  // ── Retry logic ────────────────────────────────────────────────────────────
+
+  private static readonly RETRY_DELAYS = [2_000, 4_000, 8_000];
+
+  private static isRetryable(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Retry on rate limit (429), service unavailable (503), gateway errors (502)
+    if (/\b(429|502|503)\b/.test(msg)) return true;
+    // Retry on transient network errors
+    if (/ECONNRESET|ETIMEDOUT|ESOCKETTIMEDOUT|EPIPE/i.test(msg)) return true;
+    return false;
+  }
+
+  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= ChatAgent.RETRY_DELAYS.length; attempt++) {
+      try {
+        return await fn();
+      } catch (err: unknown) {
+        lastError = err;
+        if (attempt >= ChatAgent.RETRY_DELAYS.length || !ChatAgent.isRetryable(err)) {
+          throw err;
+        }
+        // Extract Retry-After header value if present in error message
+        const msg = err instanceof Error ? err.message : String(err);
+        const retryAfterMatch = msg.match(/retry[- ]?after[:\s]*(\d+)/i);
+        const delayMs = retryAfterMatch
+          ? Math.min(Number(retryAfterMatch[1]) * 1_000, 30_000)
+          : ChatAgent.RETRY_DELAYS[attempt];
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    throw lastError;
+  }
+
   // ── LLM Call ──────────────────────────────────────────────────────────────
 
   private async callTextOnly(systemPrompt: string, userMessage: string): Promise<string> {
-    if (this.config.llmProvider === "anthropic") {
-      return this.callAnthropicTextOnly(systemPrompt, userMessage);
-    }
-    return this.callOpenAiTextOnly(systemPrompt, userMessage);
+    return this.withRetry(() => {
+      if (this.config.llmProvider === "anthropic") {
+        return this.callAnthropicTextOnly(systemPrompt, userMessage);
+      }
+      return this.callOpenAiTextOnly(systemPrompt, userMessage);
+    });
   }
 
   private async callOpenAiTextOnly(systemPrompt: string, userMessage: string): Promise<string> {
@@ -534,32 +583,37 @@ You have access to MCP tools via tool calling. Always call tools when you need t
 
 When setup is incomplete, first call setup_agent with action="get_status". Then guide the user in chat, one question at a time. Do NOT run a separate terminal wizard and do NOT skip steps.
 
-### Step 1: Bind developer wallet
-- Ask for their Base/EVM 0x developer wallet. Explain this is the recovery/Hub/withdrawal wallet; Solana/Base trading wallets are created separately in the next step.
+### Step 1: Choose trading networks
+- Ask: "Which networks should this agent trade on: Solana, Base (EVM), or both?"
+
+### Step 2: Bind root developer wallet
+- If they choose Solana, ask for their Solana root/recovery/withdrawal wallet unless setup status already says solanaWalletBound=true. Explain the same Solana address is used for Solana root, recovery, and withdrawals, and is separate from the generated Solana trading wallet.
+- Ask them to paste the same Solana address again only if you need confirmation.
+- Call: setup_agent { action: "bind_solana_root_wallet", solanaWalletAddress: "<their address>", solanaWalletAddressConfirm: "<their address>" }
+- If they choose Base/EVM, ask for their Base/EVM 0x developer wallet unless setup status already says evmWalletBound=true. Explain this is the Base root/recovery/Hub/withdrawal wallet; Solana/Base trading wallets are created separately.
 - Ask them to paste the same 0x address again only if you need confirmation.
 - Call: setup_agent { action: "bind_developer_wallet", walletAddress: "<their address>", walletAddressConfirm: "<their address>" }
-- Tell them their master key from the response. Say clearly that it is shown only once and must be saved.
+- Tell them their master key from the response only when the response includes one. Say clearly that it is shown only once and must be saved. If no master key is returned, say the master key was already created and is not shown again.
 
-### Step 2: Choose trading networks and create wallets
-- Ask: "Which networks should this agent trade on: Solana, Base (EVM), or both?"
+### Step 3: Create trading wallets
 - If they choose Solana, call: setup_agent { action: "create_wallet", chain: "solana" }
 - If they choose Base/EVM, call: setup_agent { action: "create_wallet", chain: "base" }
 - If they choose both, call both tool actions sequentially and show both addresses.
 - Funding guidance: Solana needs SOL in the Solana wallet; Base needs ETH in the Base wallet for gas and tokens.
 
-### Step 3: Bind Solana recovery wallet when Solana is selected
-- Only ask for this if Solana trading was selected.
-- Ask for their Solana recovery/withdrawal wallet. Explain this is where SOL/SPL withdrawals go; it is not the generated Solana trading wallet.
+### Step 4: Bind missing Solana root/recovery wallet
+- Only ask for this if Solana trading was selected and setup did not already bind a Solana wallet.
+- Ask for their Solana root/recovery/withdrawal wallet. Explain this is where SOL/SPL withdrawals go; it is not the generated Solana trading wallet.
 - Ask them to paste the same Solana address again for confirmation.
 - Call: setup_agent { action: "bind_solana_developer_wallet", solanaWalletAddress: "<their address>", solanaWalletAddressConfirm: "<their address>" }
 - If only Base/EVM was selected, skip this step.
 
-### Step 4: Configure slippage
+### Step 5: Configure slippage
 - Ask for slippage in percent or basis points. Explain: 1% = 100 bps, 3% = 300 bps, 5% = 500 bps.
 - If the user answers a plain number like "5" while discussing percent/slippage, treat it as 5% = 500 bps unless they explicitly say "5 bps".
 - Call: setup_agent { action: "configure_slippage", slippageBps: <converted bps> }
 
-### Step 5: Configure hard limits and strategy
+### Step 6: Configure hard limits and strategy
 - Ask for max per-trade limits for the selected networks: max SOL per trade for Solana and/or max USD per trade for Base/EVM.
 - Ask for separate natural-language strategy text for Solana and Base when both chains are selected. Keep the chain distinction explicit.
 - Each strategy should include entry filters, stop loss, take profit, max concurrent positions and any tokens/categories to avoid.
@@ -579,13 +633,14 @@ When setup is incomplete, first call setup_agent with action="get_status". Then 
 ## IMPORTANT RULES
 - shadowMode is ALWAYS false. Never enable it.
 - Complete ALL setup steps before trading.
-- Always show wallet addresses and master key to the user.
+- Always show wallet addresses. Show the master key only if setup_agent returns one; otherwise say it was already created and is not shown again.
 - If the user asks where to fund or which wallet is active, prefer the "Known Balchemy runtime context" included in the latest user message. If that context lists a Solana or Base trading wallet, never say that wallet is not visible.
 - Ask questions and wait for answers — don't rush through setup.
 - When the user tells you their strategy, repeat it back to confirm before configuring.
 - Never assume both chains. Ask Solana/Base/both, then create only the selected chain wallets.
 - Never ask for a separate Base trading wallet address; the Base trading wallet is generated by create_wallet chain="base".
-- Always ask for a Solana recovery/withdrawal wallet when Solana is selected.
+- Always ensure a Solana root/recovery/withdrawal wallet exists when Solana is selected. If setup status already has solanaWalletBound=true, reuse it.
+- A Solana-created agent can later add Base by binding an EVM wallet. A Base-created agent can later add Solana by binding the Solana root/recovery/withdrawal wallet. Never tell the user to create a new agent just to add the other chain.
 
 ## TRADING BEHAVIOR (after setup)
 - Explain every decision: what token you found, why it matches their strategy, what you're doing.

@@ -1,6 +1,6 @@
 {
   "name": "balchemy",
-  "version": "0.1.23",
+  "version": "0.2.3",
   "license": "MIT",
   "type": "module",
   "description": "Scaffold and run a Balchemy autonomous AI trading agent in 5 minutes",
@@ -33,7 +33,7 @@
   "homepage": "https://balchemy.ai",
   "repository": {
     "type": "git",
-    "url": "https://github.com/balchemy/balchemy-agent",
+    "url": "git+https://github.com/balchemy/balchemy-agent.git",
     "directory": "packages/cli"
   },
   "bugs": {

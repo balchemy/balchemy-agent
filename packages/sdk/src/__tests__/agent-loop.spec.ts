@@ -28,7 +28,6 @@ describe('AgentLoop', () => {
     };
 
     const loop = new AgentLoop(config);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((loop as unknown as Record<string, unknown>)['sseEndpoint']).toBe('https://api.balchemy.ai/mcp/test123/events/sse');
   });
 

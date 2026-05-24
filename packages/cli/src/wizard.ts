@@ -73,7 +73,7 @@ const PROVIDERS: ProviderDef[] = [
     baseUrl: "https://api.anthropic.com",
     sdkProvider: "anthropic",
     authHeader: "x-api-key",
-    keyUrl: "https://console.anthropic.com/settings/keys",
+    keyUrl: "https://www.anthropic.com/api",
     models: [
       { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5", tier: "fast", costHint: "$1/1M in · $5/1M out" },
       { id: "claude-sonnet-4-6-20260217", label: "Claude Sonnet 4.6", tier: "balanced", costHint: "$3/1M in · $15/1M out" },
@@ -114,7 +114,7 @@ const PROVIDERS: ProviderDef[] = [
     baseUrl: "https://api.x.ai/v1",
     sdkProvider: "openai",
     authHeader: "Authorization",
-    keyUrl: "https://console.x.ai/",
+    keyUrl: "https://x.ai/api",
     models: [
       { id: "grok-4.1-fast", label: "Grok 4.1 Fast", tier: "fast", costHint: "$0.20/1M in · $0.50/1M out" },
       { id: "grok-4", label: "Grok 4", tier: "balanced", costHint: "$2/1M in · $6/1M out" },
@@ -668,7 +668,7 @@ export async function runWizard(outDir: string): Promise<void> {
       ], "success");
 
       printInfo(`Full Balchemy API key will be written to ${path.join(outDir, ".env")} as BALCHEMY_API_KEY.`);
-      printInfo("The master key is created in the chat setup after you bind the Base/EVM developer wallet; copy it when it appears.\n");
+      printInfo("The master key is created in chat setup after the first root/recovery wallet is bound; copy it when it appears because it is shown once.\n");
 
       printInfo("Next, the chat cockpit will guide setup: developer wallet, Solana/Base choice, trading wallets, slippage, hard limits and strategy.\n");
     } else {

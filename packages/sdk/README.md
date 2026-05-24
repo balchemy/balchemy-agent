@@ -1,18 +1,35 @@
 # @balchemyai/agent-sdk
 
-TypeScript SDK for Balchemy external AI agents. Handles onboarding (SIWE wallet-based or walletless Identity flow), MCP tool access, token lifecycle management, and real-time SSE event streaming.
+TypeScript SDK for external agents that connect to Balchemy through MCP. Use it
+to onboard an agent, request scoped access, call tools, refresh tokens, and
+consume SSE events.
 
-## Installation
+Balchemy does not ask an inner model to make trade decisions. Your outer LLM
+chooses tools. Balchemy checks policy, executes through the authorized path, and
+keeps the record.
+
+## Install
 
 ```sh
 npm install @balchemyai/agent-sdk
 ```
 
-## Auth Paths
+## Create a Client
 
-### Path 1 — SIWE (wallet-based)
+```ts
+import { BalchemyAgentSdk } from "@balchemyai/agent-sdk";
 
-Use this when your agent controls a Solana or EVM wallet and can sign messages.
+const sdk = new BalchemyAgentSdk({
+  apiBaseUrl: "https://api.balchemy.ai/api",
+});
+```
+
+`apiBaseUrl` includes `/api` and has no trailing slash.
+
+## Auth Path 1: SIWE
+
+Use this path when the agent controls a wallet and can sign an off-chain
+message.
 
 ```ts
 import { BalchemyAgentSdk } from "@balchemyai/agent-sdk";
@@ -21,24 +38,21 @@ const sdk = new BalchemyAgentSdk({
   apiBaseUrl: "https://api.balchemy.ai/api",
 });
 
-// 1. Request a nonce and SIWS message
-const { message, nonce } = await sdk.requestSiweNonce({
+const { message } = await sdk.requestSiweNonce({
   address: "YOUR_WALLET_ADDRESS",
   chainId: 8453,
-  domain: "youragent.example.com",
-  uri: "https://youragent.example.com",
+  domain: "agent.example.com",
+  uri: "https://agent.example.com",
   statement: "Sign in to Balchemy",
 });
 
-// 2. Sign `message` with your wallet (off-chain, using your signing library)
 const signature = await wallet.signMessage(message);
 
-// 3. Onboard
 const response = await sdk.onboardWithSiwe({
   message,
   signature,
-  agentId: "your-agent-unique-id",
-  scope: "trade", // "read" | "trade"
+  agentId: "agent-example",
+  scope: "trade",
 });
 
 const mcp = sdk.connectMcp({
@@ -47,9 +61,10 @@ const mcp = sdk.connectMcp({
 });
 ```
 
-### Path 2 — Identity / Walletless
+## Auth Path 2: Walletless Identity
 
-Use this when your agent has an HMAC-signed identity token (for balchemy native) or ES256 JWT (for external providers) from a provider registered with Balchemy.
+Use this path when the platform operator has registered an identity provider and
+the agent holds a valid HMAC identity token or ES256 JWT.
 
 ```ts
 import { BalchemyAgentSdk } from "@balchemyai/agent-sdk";
@@ -59,9 +74,9 @@ const sdk = new BalchemyAgentSdk({
 });
 
 const response = await sdk.onboardWithIdentity({
-  provider: "your-registered-provider-id",
-  identityToken: "YOUR_PROVIDER_JWT",
-  agentId: "your-agent-unique-id",
+  provider: "registered-provider-id",
+  identityToken: "PROVIDER_JWT",
+  agentId: "agent-example",
   chainId: 8453,
   scope: "trade",
 });
@@ -72,54 +87,54 @@ const mcp = sdk.connectMcp({
 });
 ```
 
-## Using the MCP Client
+If the endpoint returns `FEATURE_DISABLED`, the backend needs
+`AGENT_WALLETLESS_ONBOARDING_ENABLED=true`.
+
+## MCP Calls
 
 ```ts
-// List available tools
 const { tools } = await mcp.listTools();
 
-// Natural language query
-const reply = await mcp.askBot({ message: "What is the price of SOL?" });
-
-// Execute an agent instruction
-const result = await mcp.agentExecute({
-  instruction: "Find a low-risk setup on Base with 50 USDC",
+const reply = await mcp.askBot({
+  message: "What is the price of SOL?",
 });
 
-// EVM quote (read-only, no wallet interaction)
+const research = await mcp.agentExecute({
+  instruction: "Find low-risk Base setups with deep liquidity.",
+});
+
 const quote = await mcp.evmQuote({
   chainId: 8453,
-  sellToken: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", // USDC on Base
-  buyToken:  "0x4200000000000000000000000000000000000006", // WETH on Base
-  sellAmount: "50000000", // 50 USDC (6 decimals)
+  sellToken: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  buyToken: "0x4200000000000000000000000000000000000006",
+  sellAmount: "50000000",
 });
 
-// EVM swap (submit: false = pending order, submit: true = on-chain execution)
-const swap = await mcp.evmSwap({
+const draftSwap = await mcp.evmSwap({
   chainId: 8453,
   sellToken: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-  buyToken:  "0x4200000000000000000000000000000000000006",
+  buyToken: "0x4200000000000000000000000000000000000006",
   sellAmount: "50000000",
-  submit: true,
+  submit: false,
 });
 ```
 
-## Tool Exposure and Scope
+`submit: false` creates a draft/pending order. Use execution only when the agent
+has the right scope and the product flow expects on-chain action.
 
-By default the MCP endpoint exposes a curated agent-facing tool set for chat, execution, setup, behavior rules, portfolio/status, and subscriptions.
-
-The broader internal catalog is only exposed when the platform flag `MCP_EXPOSE_GRANULAR_TOOLS=true` is enabled on the bot. Contact the Balchemy team if your integration needs granular tool access beyond the default agent-facing surface.
-
-Tool scopes:
+## Scope
 
 | Scope | Access |
-|-------|--------|
-| `"read"` | Read-only tools — market data, portfolio views, research |
-| `"trade"` | All read tools + trade execution tools |
+| --- | --- |
+| `read` | Market data, portfolio views, research, status |
+| `trade` | Read tools plus trade execution tools |
 
-Pass `scope` during onboarding to receive an MCP key with the appropriate permissions.
+The default MCP endpoint exposes a curated agent-facing surface for chat,
+execution, setup, behavior rules, portfolio/status, and subscriptions. Granular
+internal tools stay hidden unless the platform flag
+`MCP_EXPOSE_GRANULAR_TOOLS=true` is enabled for the bot.
 
-## Error Handling
+## Errors
 
 All SDK methods throw `AgentSdkError` on failure.
 
@@ -127,64 +142,77 @@ All SDK methods throw `AgentSdkError` on failure.
 import { AgentSdkError } from "@balchemyai/agent-sdk";
 import type { AgentSdkErrorCode } from "@balchemyai/agent-sdk";
 
-try {
-  const result = await mcp.agentExecute({ instruction: "..." });
-} catch (err: unknown) {
-  if (err instanceof AgentSdkError) {
-    const code: AgentSdkErrorCode = err.code;
-    // "auth_error" | "policy_error" | "rate_limit" | "provider_auth_error"
-    // | "network_error" | "execution_error" | "invalid_response"
-    console.error(`[${code}] ${err.message}`, err.details);
+type SdkFailure = {
+  code: AgentSdkErrorCode;
+  message: string;
+  details: unknown;
+};
+
+function toSdkFailure(err: unknown): SdkFailure | null {
+  if (!(err instanceof AgentSdkError)) {
+    return null;
   }
+
+  return {
+    code: err.code,
+    message: err.message,
+    details: err.details,
+  };
 }
 ```
+
+Known codes include `auth_error`, `policy_error`, `rate_limit`,
+`provider_auth_error`, `network_error`, `execution_error`, and
+`invalid_response`.
 
 ## Tool Response Helpers
 
 ```ts
-import { getToolText, parseToolJson, isToolError } from "@balchemyai/agent-sdk";
+import { getToolText, isToolError, parseToolJson } from "@balchemyai/agent-sdk";
 
 const response = await mcp.agentPortfolio();
 
-if (isToolError(response)) {
-  console.error("Tool returned an error:", getToolText(response));
-} else {
-  const data = parseToolJson(response); // T | null
-  console.log(data);
-}
+const portfolio = isToolError(response)
+  ? { error: getToolText(response) }
+  : { data: parseToolJson(response) };
 ```
 
-## Token Management
+## Token Store
 
 ```ts
 import { TokenStore } from "@balchemyai/agent-sdk";
 
 const store = new TokenStore({
-  // Called when the stored token nears expiry — return a fresh OnboardingResponse
-  refreshFn: async () => {
-    return sdk.onboardWithIdentity({ ... });
-  },
+  refreshFn: async () =>
+    sdk.onboardWithIdentity({
+      provider: "registered-provider-id",
+      identityToken: "PROVIDER_JWT",
+      agentId: "agent-example",
+      chainId: 8453,
+      scope: "trade",
+    }),
 });
 
 await store.set(response);
-const token = await store.get(); // auto-refreshes if expiry < threshold
+const token = await store.get();
 ```
+
+The store refreshes when the token is near expiry.
 
 ## Identity Access Token
 
-The `OnboardingResponse` includes an `identityAccess` field when the platform issues a short-lived access token alongside the MCP key.
+`OnboardingResponse` includes `identityAccess` when the platform issues a
+short-lived identity access token beside the MCP key.
 
 ```ts
 import type { IdentityAccess } from "@balchemyai/agent-sdk";
 
 const access: IdentityAccess | undefined = response.identityAccess;
-if (access) {
-  console.log(access.scope);     // "read" | "trade"
-  console.log(access.expiresAt); // ISO timestamp
-}
+const scope = access?.scope;
+const expiresAt = access?.expiresAt;
 ```
 
-## SSE Event Streaming
+## SSE Events
 
 ```ts
 import { SseEventStream } from "@balchemyai/agent-sdk";
@@ -196,34 +224,34 @@ const stream = new SseEventStream(
   { reconnectDelayMs: 2000, maxReconnects: 0 }
 );
 
-// Async iterator
-for await (const event of stream) {
-  const e: SseEvent = event;
-  console.log(e.event, e.data);
+async function readEvents() {
+  for await (const event of stream) {
+    handleEvent(event);
+  }
 }
 
-// Or callback-based
-const unsubscribe = stream.subscribe(
-  (event) => console.log(event),
-  (err)   => console.error(err)
-);
-// later: unsubscribe();
+function handleEvent(event: SseEvent) {
+  return event;
+}
 ```
 
 ## Identity Token Revocation
 
 ```ts
-// Revoke a token by JTI
-await sdk.revokeIdentityToken({ jti: "the-token-jti", ttlSeconds: 86400 });
+await sdk.revokeIdentityToken({
+  jti: "token-jti",
+  ttlSeconds: 86400,
+});
 
-// Check revocation status
-const { revoked } = await sdk.getIdentityTokenRevokeStatus({ jti: "the-token-jti" });
+const { revoked } = await sdk.getIdentityTokenRevokeStatus({
+  jti: "token-jti",
+});
 ```
 
-## Platform Endpoints Reference
+## Platform Endpoints
 
 | Endpoint | Path | Auth |
-|----------|------|------|
+| --- | --- | --- |
 | MCP server | `POST /api/mcp/{publicId}` | `Authorization: Bearer <mcp-api-key>` |
 | SIWE nonce | `POST /api/nest/auth/evm/nonce` | Public |
 | SIWE onboarding | `POST /api/public/erc8004/onboarding/siwe` | Public |
@@ -233,45 +261,25 @@ const { revoked } = await sdk.getIdentityTokenRevokeStatus({ jti: "the-token-jti
 | MCP discovery | `GET /.well-known/mcp.json` | Public |
 | Agent directory | `GET /api/nest/agents/verified/page` | Public |
 
-> Note: the JWKS endpoint is served at `/.well-known/jwks.json` (root-relative, **not** under `/api`).
+JWKS is root-relative. Do not prefix it with `/api`.
 
-## Platform Operator Setup
-
-To enable agent onboarding, the following environment variables must be configured on the backend:
+## Operator Setup
 
 | Variable | Required | Description |
-|----------|----------|-------------|
-| `AGENT_WALLETLESS_ONBOARDING_ENABLED` | For walletless path | Set to `true` to enable the identity/walletless onboarding endpoint. Default: `false`. |
-| `SIWE_DOMAIN_ALLOWLIST` | For SIWE path | Comma-separated list of allowed domains for SIWE message verification (e.g. `youragent.example.com,localhost`). |
-| `ERC8004_IDENTITY_PROVIDERS` | For walletless path | Comma-separated list of allowed identity provider IDs (e.g. `github-actions,openclaw`). |
-| `AGENT_IDENTITY_ISSUER_PRIVATE_KEY_PEM` | For identity tokens | ES256 private key (PEM or base64) for signing agent identity access tokens. Required if issuing short-lived identity tokens. |
-| `API_URL` | Always | Base API URL used to build MCP endpoint URLs in onboarding responses (e.g. `https://api.balchemy.ai/api`). |
-
-## Getting Started (Quickstart)
-
-1. Install the SDK:
-   ```sh
-   npm install @balchemyai/agent-sdk
-   ```
-
-2. Create an MCP API key for your bot via the Hub UI: `Hub > Your Bot > API Keys > Create Key`.
-
-3. Choose an auth path:
-   - **SIWE (wallet-based):** Your agent must control an EVM wallet and can sign messages.
-   - **Walletless (identity token):** Your agent has an HMAC-signed identity token (balchemy native) or ES256 JWT (external provider) from a registered provider. The platform operator must set `AGENT_WALLETLESS_ONBOARDING_ENABLED=true`.
-
-4. Run the relevant code example in the [Auth Paths](#auth-paths) section above.
-
-5. Use the returned `mcp.endpoint` and `mcp.apiKey` to make MCP tool calls.
-
-6. The MCP key is scoped — `"read"` for read-only tools, `"trade"` for trade execution tools. Choose at onboarding time via the `scope` parameter.
+| --- | --- | --- |
+| `AGENT_WALLETLESS_ONBOARDING_ENABLED` | Walletless path | Enables identity onboarding. Default: `false`. |
+| `SIWE_DOMAIN_ALLOWLIST` | SIWE path | Comma-separated domains allowed in SIWE verification. |
+| `ERC8004_IDENTITY_PROVIDERS` | Walletless path | Registered provider IDs. |
+| `AGENT_IDENTITY_ISSUER_PRIVATE_KEY_PEM` | Identity tokens | ES256 private key for short-lived identity access tokens. |
+| `API_URL` | Always | Base API URL used to build MCP endpoint URLs. |
 
 ## Notes
 
-- `agent_seed_request` is disabled on the platform. The `requestSeed()` method exists for backward compatibility but always throws a deterministic `AgentSdkError` with code `"execution_error"`.
-- `apiBaseUrl` must include the `/api` path segment and must **not** have a trailing slash.
-- The JWKS endpoint is at `/.well-known/jwks.json` (root-relative). Do not prefix with `/api`.
-- If walletless onboarding returns HTTP 403 with `code: "FEATURE_DISABLED"`, the platform operator needs to set `AGENT_WALLETLESS_ONBOARDING_ENABLED=true`.
+- `agent_seed_request` is disabled on the platform.
+- `requestSeed()` remains for compatibility and throws `AgentSdkError` with
+  code `execution_error`.
+- MCP keys are scoped. Choose `read` or `trade` during onboarding.
+- Walletless onboarding requires an operator-approved provider.
 
 ## Docs
 
@@ -279,4 +287,4 @@ To enable agent onboarding, the following environment variables must be configur
 - [Python parity backlog](docs/python-parity-backlog.md)
 - [Partner integration checklist](docs/partner-integration-checklist.md)
 - [Release policy](docs/release-policy.md)
-- Full API reference: [https://balchemy.ai/docs](https://balchemy.ai/docs)
+- [Full API reference](https://balchemy.ai/docs)

@@ -96,7 +96,7 @@ function MessageCard({
 function AgentMsg({ msg, width }: { msg: ChatMessage; width: number }): React.ReactElement {
   return (
     <MessageCard label="AI" labelColor="cyan" msg={msg} width={width}>
-      <WrappedText color="white" width={Math.max(8, width - 1)} text={compactText(msg.text, 560)} maxLines={8} />
+      <WrappedText color="white" width={Math.max(8, width - 1)} text={compactText(msg.text, 1200)} maxLines={16} />
     </MessageCard>
   );
 }
@@ -104,7 +104,7 @@ function AgentMsg({ msg, width }: { msg: ChatMessage; width: number }): React.Re
 function UserMsg({ msg, width }: { msg: ChatMessage; width: number }): React.ReactElement {
   return (
     <MessageCard label="YOU" labelColor="yellow" msg={msg} width={width}>
-      <WrappedText color="white" width={Math.max(8, width - 1)} text={compactText(msg.text, 300)} maxLines={5} />
+      <WrappedText color="white" width={Math.max(8, width - 1)} text={compactText(msg.text, 600)} maxLines={10} />
     </MessageCard>
   );
 }
@@ -113,7 +113,7 @@ function SystemMsg({ msg, width }: { msg: ChatMessage; width: number }): React.R
   const meta = getSystemMeta(msg.text);
   const prefix = `${meta.label}  ${formatTime(msg.timestamp)}  `;
   const bodyWidth = Math.max(0, width - displayWidth(prefix));
-  const bodyText = compactText(meta.body, 220).replace(/\s+/g, " ");
+  const bodyText = compactText(meta.body, 400).replace(/\s+/g, " ");
   const body = bodyWidth > 0 ? truncateMiddle(bodyText, bodyWidth) : "";
 
   return (
@@ -136,7 +136,7 @@ function TradeMsg({ msg, width }: { msg: ChatMessage; width: number }): React.Re
       msg={msg}
       width={width}
     >
-      <WrappedText color={color} bold width={Math.max(8, width - 1)} text={compactText(msg.text, 300)} maxLines={5} />
+      <WrappedText color={color} bold width={Math.max(8, width - 1)} text={compactText(msg.text, 600)} maxLines={10} />
     </MessageCard>
   );
 }
@@ -144,7 +144,7 @@ function TradeMsg({ msg, width }: { msg: ChatMessage; width: number }): React.Re
 function ErrorMsg({ msg, width }: { msg: ChatMessage; width: number }): React.ReactElement {
   return (
     <MessageCard label="ERROR" labelColor="red" msg={msg} width={width}>
-      <WrappedText color="red" width={Math.max(8, width - 1)} text={compactText(msg.text, 500)} maxLines={7} />
+      <WrappedText color="red" width={Math.max(8, width - 1)} text={compactText(msg.text, 800)} maxLines={10} />
     </MessageCard>
   );
 }
@@ -159,6 +159,29 @@ function MessageLine({ msg, width }: { msg: ChatMessage; width: number }): React
   }
 }
 
+// ── Thinking indicator ──────────────────────────────────────────────────────
+
+const THINKING_FRAMES = ["·  ", "·· ", "···", " ··", "  ·"];
+
+function ThinkingIndicator({ width }: { width: number }): React.ReactElement {
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setFrame((f) => (f + 1) % THINKING_FRAMES.length);
+    }, 200);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <Box marginBottom={0} width={width}>
+      <Text color="cyan" bold>AI</Text>
+      <Text dimColor>  </Text>
+      <Text color="cyan">{THINKING_FRAMES[frame]}</Text>
+    </Box>
+  );
+}
+
 // ── ChatPanel ────────────────────────────────────────────────────────────────
 
 const SCROLL_STEP = 5;
@@ -171,6 +194,7 @@ interface ChatPanelProps {
   pageSize?: number;
   inputPlaceholder?: string;
   width: number;
+  thinking?: boolean;
 }
 
 export function ChatPanel({
@@ -181,6 +205,7 @@ export function ChatPanel({
   pageSize = 30,
   inputPlaceholder,
   width,
+  thinking = false,
 }: ChatPanelProps): React.ReactElement {
   const [inputKey, setInputKey] = useState(0);
   const [scrollOffset, setScrollOffset] = useState(0);
@@ -237,36 +262,38 @@ export function ChatPanel({
   }, [onSend]);
 
   return (
-    <Box flexDirection="column" width={panelWidth} flexShrink={0}>
+    <Box flexDirection="column" width={panelWidth} flexGrow={1}>
       {/* Scroll-up indicator */}
       {hasOlder && (
-        <Box paddingX={1}>
+        <Box paddingX={1} flexShrink={0}>
           <Text dimColor>{truncateEnd(`↑ ${start} earlier items · PgUp`, historyWidth)}</Text>
         </Box>
       )}
 
-      {/* Message history */}
+      {/* Message history — fills all available space, messages align to bottom */}
       <Box flexDirection="column" flexGrow={1} overflowY="hidden" paddingX={1} justifyContent="flex-end" width={panelWidth}>
-        {visibleMessages.length === 0 && (
+        {visibleMessages.length === 0 && !thinking && (
           <Box flexDirection="column" marginBottom={1} width={messageWidth}>
             <Text color="white" bold>No activity yet</Text>
-            <Text dimColor>{truncateEnd("Agent replies and tool traces appear here.", messageWidth)}</Text>
+            <Text dimColor>{truncateEnd("Try: 'check my portfolio' or 'what can you do?'", messageWidth)}</Text>
           </Box>
         )}
         {visibleMessages.map((msg) => (
           <MessageLine key={msg.id} msg={msg} width={messageWidth} />
         ))}
+        {thinking && <ThinkingIndicator width={messageWidth} />}
       </Box>
 
       {/* Scroll-down indicator */}
       {!isAtBottom && (
-        <Box paddingX={1}>
+        <Box paddingX={1} flexShrink={0}>
           <Text dimColor>{truncateEnd(`↓ ${scrollOffset} newer items · PgDn`, historyWidth)}</Text>
         </Box>
       )}
 
+      {/* Prompt — pinned to bottom */}
       {!hideInput && (
-        <Box paddingX={1} paddingY={0} width={panelWidth}>
+        <Box paddingX={1} paddingY={0} width={panelWidth} flexShrink={0}>
           <Box borderStyle="round" borderColor={inputActive ? "cyan" : "gray"} paddingX={1} width={promptWidth} flexShrink={0}>
             <Text color={inputActive ? "cyan" : "gray"} bold>Prompt</Text>
             <Text dimColor>  </Text>

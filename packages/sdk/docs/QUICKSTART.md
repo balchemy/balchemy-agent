@@ -88,6 +88,10 @@ const loop = AgentLoop.fromConfig('./agent.config.yaml');
 await loop.start();
 
 // Or inline config
+const statusEvents: string[] = [];
+const decisionEvents: unknown[] = [];
+const errorEvents: string[] = [];
+
 const loop2 = new AgentLoop({
   mcpEndpoint: 'https://api.balchemy.ai/mcp/YOUR_PUBLIC_ID',
   apiKey: process.env.BALCHEMY_API_KEY!,
@@ -95,9 +99,9 @@ const loop2 = new AgentLoop({
   llmApiKey: process.env.ANTHROPIC_API_KEY!,
   llmModel: 'claude-haiku-4-5',
   maxDailyLlmCost: 5,
-  onStatusChange: (s) => console.log('status', s.status),
-  onDecision: (d) => console.log('decision', d),
-  onError: (e) => console.error('error', e.message),
+  onStatusChange: (s) => statusEvents.push(s.status),
+  onDecision: (d) => decisionEvents.push(d),
+  onError: (e) => errorEvents.push(e.message),
 });
 await loop2.start();
 ```

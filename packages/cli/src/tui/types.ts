@@ -25,6 +25,16 @@ export interface TradeInfo {
   timestamp: number;
 }
 
+export interface TradeConfirmationDetails {
+  preview: string;
+  intent: string;
+  action: string;
+  token: string;
+  amount: string;
+  chain: string;
+  rawArgs: Record<string, unknown>;
+}
+
 export interface WalletInfo {
   chain: "solana" | "base";
   address: string;

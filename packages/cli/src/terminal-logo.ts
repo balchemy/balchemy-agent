@@ -9,27 +9,20 @@
 import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
+import { C } from "./colors.js";
 
 const __filename_esm = fileURLToPath(import.meta.url);
 const __dirname_esm = path.dirname(__filename_esm);
 
-// ── Brand colors ──────────────────────────────────────────────────────────────
-
-const T  = "\x1b[38;2;0;172;176m";    // teal
-const DT = "\x1b[38;2;0;120;124m";    // dark teal
-const G  = "\x1b[38;2;186;115;6m";    // gold
-const R  = "\x1b[0m";                  // reset
-
 // ── ANSI fallback logo ────────────────────────────────────────────────────────
 
-const D = "\x1b[38;5;245m"; // dim gray
-const ANSI_LOGO = [
+const ANSI_LOGO_LINES = [
   ``,
-  `  ${G}B${T}ALCHEMY${R}  ${D}AGENT CLI${R}`,
-  `  ${D}calm control for live autonomous trading${R}`,
-  `  ${DT}${"-".repeat(52)}${R}`,
+  `  ${C.G}B${C.T}ALCHEMY${C.R}  ${C.D}AGENT CLI${C.R}`,
+  `  ${C.D}calm control for live autonomous trading${C.R}`,
+  `  ${C.DT}${"-".repeat(52)}${C.R}`,
   ``,
-].join("\n");
+];
 
 interface BundledImage {
   base64: string;
@@ -96,13 +89,13 @@ export function renderLogo(widthCols = 20): string {
   const protocol = detectProtocol();
 
   if (protocol === "none") {
-    return ANSI_LOGO;
+    return ANSI_LOGO_LINES.join("\n");
   }
 
   // Try to load the bundled image
   const image = loadBundledImage();
   if (!image) {
-    return ANSI_LOGO;
+    return ANSI_LOGO_LINES.join("\n");
   }
 
   if (protocol === "iterm2") {
@@ -113,7 +106,7 @@ export function renderLogo(widthCols = 20): string {
     return "\n" + renderKitty(image, widthCols) + "\n";
   }
 
-  return ANSI_LOGO;
+  return ANSI_LOGO_LINES.join("\n");
 }
 
 function loadBundledImage(): BundledImage | null {

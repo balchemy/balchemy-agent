@@ -2,6 +2,9 @@ export type SetupChain = "solana" | "base";
 
 export interface SetupStatusSnapshot {
   developerWalletBound?: boolean;
+  rootWalletKind?: "evm" | "solana";
+  rootWalletKinds?: Array<"evm" | "solana">;
+  evmWalletBound?: boolean;
   walletsConfigured?: boolean;
   tradingConfigured?: boolean;
   slippageConfigured?: boolean;
@@ -34,24 +37,36 @@ export function parseNetworkSelection(value: string): SetupChain[] | null {
 export function parseSetupStatusSnapshot(
   structured?: Record<string, unknown>,
 ): SetupStatusSnapshot {
+  const rootWalletKinds = Array.isArray(structured?.rootWalletKinds)
+    ? structured.rootWalletKinds.filter((kind): kind is "evm" | "solana" => kind === "evm" || kind === "solana")
+    : [];
+  const rootWalletKind = structured?.rootWalletKind === "evm" || structured?.rootWalletKind === "solana"
+    ? structured.rootWalletKind
+    : undefined;
   return {
     developerWalletBound:
       structured?.developerWalletBound === true
-      || structured?.walletBound === true,
+      || structured?.walletBound === true
+      || structured?.rootWalletBound === true,
+    rootWalletKind,
+    rootWalletKinds,
+    evmWalletBound: structured?.evmWalletBound === true || rootWalletKind === "evm" || rootWalletKinds.includes("evm"),
     walletsConfigured: structured?.walletsConfigured === true,
     tradingConfigured: structured?.tradingConfigured === true,
     slippageConfigured: structured?.slippageConfigured === true,
     strategyConfigured: structured?.strategyConfigured === true,
-    solanaWalletBound: structured?.solanaWalletBound === true,
+    solanaWalletBound: structured?.solanaWalletBound === true || rootWalletKind === "solana" || rootWalletKinds.includes("solana"),
     selectedChains: normalizeSelectedChains(structured?.selectedChains),
     nextStep: typeof structured?.nextStep === "string" ? structured.nextStep : null,
   };
 }
 
 export function getInitialSetupStep(status: SetupStatusSnapshot): "developer-wallet" | "networks" | "solana-recovery-wallet" | "slippage" | "strategy" | "subscriptions" {
-  if (!status.developerWalletBound) return "developer-wallet";
+  const selectedChains = status.selectedChains ?? [];
+  if (!status.developerWalletBound && selectedChains.length === 0) return "networks";
+  if (selectedChains.includes("base") && !status.evmWalletBound) return "developer-wallet";
+  if (selectedChains.includes("solana") && !status.solanaWalletBound) return "solana-recovery-wallet";
   if (!status.walletsConfigured) return "networks";
-  if (status.selectedChains?.includes("solana") && !status.solanaWalletBound) return "solana-recovery-wallet";
   if (!status.slippageConfigured) return "slippage";
   if (!status.strategyConfigured && !status.tradingConfigured) return "strategy";
   return "subscriptions";
@@ -60,21 +75,27 @@ export function getInitialSetupStep(status: SetupStatusSnapshot): "developer-wal
 export function isSetupReady(status: SetupStatusSnapshot | null): boolean {
   if (!status) return false;
   if (status.nextStep) return false;
+  if (status.selectedChains?.includes("base") && !status.evmWalletBound) return false;
   if (status.selectedChains?.includes("solana") && !status.solanaWalletBound) return false;
   return status.tradingConfigured === true && status.walletsConfigured === true;
 }
 
 export function buildSetupRequiredMessage(status: SetupStatusSnapshot): string {
-  if (!status.developerWalletBound) {
-    return "Setup incomplete. I will guide you here in chat. First: provide your Base/EVM 0x developer wallet for recovery and Hub access.";
+  const selectedChains = status.selectedChains ?? [];
+  if (!status.developerWalletBound && selectedChains.length === 0) {
+    return "Setup incomplete. I will guide you here in chat. First: choose the trading networks: Solana, Base (EVM), or both.";
+  }
+
+  if (selectedChains.includes("base") && !status.evmWalletBound) {
+    return "Setup incomplete. Base trading requires your Base/EVM 0x developer wallet for recovery and Hub access.";
+  }
+
+  if (selectedChains.includes("solana") && !status.solanaWalletBound) {
+    return "Setup incomplete. Solana trading requires your Solana root/recovery/withdrawal wallet. This same address is used for Solana withdrawals.";
   }
 
   if (!status.walletsConfigured) {
     return "Setup incomplete. Next: choose the trading networks: Solana, Base (EVM), or both. I will create the selected trading wallets.";
-  }
-
-  if (status.selectedChains?.includes("solana") && !status.solanaWalletBound) {
-    return "Setup incomplete. Solana trading was selected. Next: provide your Solana recovery/withdrawal wallet.";
   }
 
   if (!status.slippageConfigured) {

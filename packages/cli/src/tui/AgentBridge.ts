@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { AgentLoop, connectMcp } from "@balchemyai/agent-sdk";
 import type { AgentLoopConfig, BalchemyMcpClient } from "@balchemyai/agent-sdk";
-import type { ChatMessage, StatusData, TradeInfo, TuiConfig, WalletInfo } from "./types.js";
+import type { ChatMessage, StatusData, TradeConfirmationDetails, TradeInfo, TuiConfig, WalletInfo } from "./types.js";
 import { ChatAgent } from "./ChatAgent.js";
 import {
   buildSetupRequiredMessage,
@@ -14,6 +14,7 @@ import {
 } from "./setup-guidance.js";
 import { buildStrategyUpdateArgs } from "./session-sync.js";
 import { loadAgent, saveAgent, type StoredAgent } from "../agent-store.js";
+import { resolveProviderLabel } from "./utils.js";
 
 /** Truncate verbose API errors (429 JSON blobs, stack traces) to a readable one-liner. */
 function truncateError(raw: string): string {
@@ -48,12 +49,30 @@ function truncateError(raw: string): string {
   return clean;
 }
 
-function resolveProviderLabel(provider: string, baseUrl?: string): string {
-  if (provider === "anthropic") return "anthropic";
-  if (baseUrl?.includes("generativelanguage.googleapis.com")) return "gemini";
-  if (baseUrl?.includes("api.x.ai")) return "grok";
-  if (baseUrl?.includes("openrouter.ai")) return "openrouter";
-  return "openai";
+/** Map raw errors to user-friendly messages for the TUI. */
+function friendlyError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+
+  // Auth errors
+  if (/\b401\b/.test(raw)) return "Authentication failed (401). Check your API key in settings (^S).";
+  if (/\b403\b/.test(raw)) return "Access denied (403). Your API key may lack required permissions.";
+
+  // Rate limiting
+  if (/\b429\b/.test(raw)) return truncateError(raw);
+
+  // Server errors
+  if (/\b500\b/.test(raw)) return "LLM server error (500). Try again shortly.";
+  if (/\b502\b/.test(raw)) return "LLM gateway error (502). The provider may be experiencing issues.";
+  if (/\b503\b/.test(raw)) return "LLM service unavailable (503). Try again in a moment.";
+
+  // Network errors
+  if (/ECONNREFUSED/i.test(raw)) return "Cannot reach LLM server. Check your network or provider status.";
+  if (/ETIMEDOUT|ESOCKETTIMEDOUT/i.test(raw)) return "Connection timed out. Check your network connection.";
+  if (/ENOTFOUND/i.test(raw)) return "DNS lookup failed. Check your network connection.";
+  if (/abort/i.test(raw) && /timeout/i.test(raw)) return "Request timed out. The LLM took too long to respond.";
+
+  // Fallback to truncated version
+  return `LLM error: ${truncateError(raw)}`;
 }
 
 function parseJsonObject(text: string): Record<string, unknown> | null {
@@ -303,7 +322,8 @@ function collectPositions(source: Record<string, unknown>): TradeInfo[] | null {
 type StateSetters = {
   addMessage: (msg: ChatMessage) => void;
   setStatus: (updater: (prev: StatusData) => StatusData) => void;
-  confirmTrade: (preview: string) => Promise<boolean>;
+  confirmTrade: (details: TradeConfirmationDetails) => Promise<boolean>;
+  setThinking: (value: boolean) => void;
 };
 
 type SetupStep =
@@ -322,6 +342,10 @@ interface SetupFlowState {
   developerWallet?: string;
   solanaRecoveryWallet?: string;
   selectedChains?: WalletInfo["chain"][];
+  rootWalletBound?: boolean;
+  rootWalletKind?: "evm" | "solana";
+  evmWalletBound?: boolean;
+  solanaWalletBound?: boolean;
   slippageBps?: number;
   strategyText?: string;
   chainStrategies?: Partial<Record<WalletInfo["chain"], string>>;
@@ -587,7 +611,7 @@ export class AgentBridge {
       },
 
       onError: (err) => {
-        this.addErrorMessage(err.message);
+        this.addErrorMessage(friendlyError(err));
       },
 
       onStatusChange: (status) => {
@@ -656,7 +680,7 @@ export class AgentBridge {
       );
       this.addAgentMessage(reply);
     } catch (err: unknown) {
-      this.addErrorMessage(`LLM error: ${err instanceof Error ? err.message : String(err)}`);
+      this.addErrorMessage(friendlyError(err));
     }
   }
 
@@ -691,11 +715,17 @@ export class AgentBridge {
     });
 
     if (this.setupFlow) {
-      await this.handleSetupInput(text);
+      this.setters.setThinking(true);
+      try {
+        await this.handleSetupInput(text);
+      } finally {
+        this.setters.setThinking(false);
+      }
       return;
     }
 
     if (!this.chatAgent) return;
+    this.setters.setThinking(true);
     try {
       const reply = await this.chatAgent.chat(
         this.withRuntimeContext(text),
@@ -703,14 +733,16 @@ export class AgentBridge {
           this.applyToolResult(name, result);
           this.addSystemMessage(`Tool: ${name}`);
         },
-        (preview) => this.setters.confirmTrade(preview),
+        (details) => this.setters.confirmTrade(details),
       );
       this.addAgentMessage(reply);
 
       // After each message, check if setup just completed — start loop if so
       await this.tryStartLoop();
     } catch (err: unknown) {
-      this.addErrorMessage(`LLM error: ${err instanceof Error ? err.message : String(err)}`);
+      this.addErrorMessage(friendlyError(err));
+    } finally {
+      this.setters.setThinking(false);
     }
   }
 
@@ -746,6 +778,10 @@ export class AgentBridge {
     const step = getInitialSetupStep(snapshot);
     this.setupFlow = {
       step,
+      rootWalletBound: snapshot.developerWalletBound === true,
+      ...(snapshot.rootWalletKind ? { rootWalletKind: snapshot.rootWalletKind } : {}),
+      evmWalletBound: snapshot.evmWalletBound === true,
+      solanaWalletBound: snapshot.solanaWalletBound === true,
       ...(snapshot.selectedChains && snapshot.selectedChains.length > 0 ? { selectedChains: snapshot.selectedChains } : {}),
     };
 
@@ -757,15 +793,15 @@ export class AgentBridge {
   private setupPromptFor(step: SetupStep): string {
     switch (step) {
       case "developer-wallet":
-        return "Paste your Base/EVM 0x developer wallet. This is the recovery, Hub, and withdrawal wallet. Trading wallets are created separately.";
+        return "Paste your Base/EVM 0x developer wallet. This is the Base root, recovery, Hub, and withdrawal wallet. Trading wallets are created separately.";
       case "developer-wallet-confirm":
         return "Paste the same 0x developer wallet again to confirm it.";
       case "networks":
         return "Which networks should this agent trade on: Solana, Base, or both?";
       case "solana-recovery-wallet":
-        return "Paste your Solana recovery/withdrawal wallet address. This is where SOL/SPL withdrawals go, and it is separate from the Solana trading wallet I create for execution.";
+        return "Paste your Solana root/recovery/withdrawal wallet address. This same address is used for Solana recovery and SOL/SPL withdrawals. It is separate from the Solana trading wallet I create for execution.";
       case "solana-recovery-wallet-confirm":
-        return "Paste the same Solana recovery/withdrawal wallet again to confirm it.";
+        return "Paste the same Solana wallet again to confirm it.";
       case "slippage":
         return "Set slippage in percent or bps. Examples: 1% = 100 bps, 3% = 300 bps, 5% = 500 bps.";
       case "strategy":
@@ -787,6 +823,25 @@ export class AgentBridge {
       `Include ${maxTrade}, entry filters, stop loss, take profit, max open positions, and avoid rules.`,
       "You can write it messy; I will ask follow-ups if anything critical is missing.",
     ].join("\n");
+  }
+
+  private async createTradingWalletsForSetup(chains: WalletInfo["chain"][]): Promise<string[]> {
+    const walletLines: string[] = [];
+    for (const chain of chains) {
+      const structured = await this.callSetupAgent({ action: "create_wallet", chain });
+      const wallet = readWallet({ ...structured, chain });
+      if (wallet) this.upsertWallet(wallet);
+      const address = wallet?.address ?? firstString(structured.address, asRecord(structured.wallet)?.address);
+      walletLines.push(`${chainTitle(chain)} trading wallet: ${address ?? "(created)"}`);
+    }
+    return walletLines;
+  }
+
+  private selectedChainsForSetup(flow: SetupFlowState): WalletInfo["chain"][] {
+    if (flow.selectedChains && flow.selectedChains.length > 0) {
+      return flow.selectedChains;
+    }
+    return [...new Set(this.knownWallets.map((wallet) => wallet.chain))];
   }
 
   private async reviewStrategyWithAi(
@@ -848,7 +903,11 @@ export class AgentBridge {
       if (flow.step === "developer-wallet-confirm") {
         const wallet = text.trim();
         if (!flow.developerWallet || wallet.toLowerCase() !== flow.developerWallet.toLowerCase()) {
-          this.setupFlow = { step: "developer-wallet" };
+          this.setupFlow = {
+            ...flow,
+            step: "developer-wallet",
+            developerWallet: undefined,
+          };
           this.addAgentMessage("The confirmation did not match. Start again by pasting the Base/EVM 0x developer wallet.");
           return;
         }
@@ -861,11 +920,66 @@ export class AgentBridge {
         if (masterKey) {
           this.persistMasterKey(masterKey);
         }
-        this.setupFlow = { step: "networks" };
+        if (flow.selectedChains && flow.selectedChains.length > 0) {
+          const nextFlow: SetupFlowState = {
+            ...flow,
+            step: "networks",
+            rootWalletBound: true,
+            rootWalletKind: "evm",
+            evmWalletBound: true,
+          };
+          if (flow.selectedChains.includes("solana") && !flow.solanaRecoveryWallet && !flow.solanaWalletBound) {
+            this.setupFlow = { ...nextFlow, step: "solana-recovery-wallet" };
+            this.addAgentMessage(
+              `${masterKey ? `Developer wallet bound.
+
+Master key saved encrypted locally and shown here so you can copy it externally:
+${masterKey}
+
+It is shown once in real environments.` : "Developer wallet bound."}
+
+${this.setupPromptFor("solana-recovery-wallet")}`,
+            );
+            return;
+          }
+          this.setupFlow = nextFlow;
+          const walletLines = await this.createTradingWalletsForSetup(flow.selectedChains);
+          this.setupFlow = {
+            ...flow,
+            step: "slippage",
+            rootWalletBound: true,
+            rootWalletKind: "evm",
+            evmWalletBound: true,
+          };
+          this.addAgentMessage(
+            `${masterKey ? `Developer wallet bound.
+
+Master key saved encrypted locally and shown here so you can copy it externally:
+${masterKey}
+
+It is shown once in real environments.` : "Developer wallet bound."}
+
+Copyable trading wallet addresses:
+${walletLines.join("\n")}
+
+${this.setupPromptFor("slippage")}`,
+          );
+          return;
+        }
+        this.setupFlow = { step: "networks", rootWalletBound: true, rootWalletKind: "evm", evmWalletBound: true };
         this.addAgentMessage(
           masterKey
-            ? `Developer wallet bound.\n\nMaster key saved encrypted locally and shown here so you can copy it externally:\n${masterKey}\n\nIt is shown once in real environments.\n\n${this.setupPromptFor("networks")}`
-            : `Developer wallet bound.\n\n${this.setupPromptFor("networks")}`,
+            ? `Developer wallet bound.
+
+Master key saved encrypted locally and shown here so you can copy it externally:
+${masterKey}
+
+It is shown once in real environments.
+
+${this.setupPromptFor("networks")}`
+            : `Developer wallet bound.
+
+${this.setupPromptFor("networks")}`,
         );
         return;
       }
@@ -876,20 +990,33 @@ export class AgentBridge {
           this.addAgentMessage("Choose Solana, Base, or both.");
           return;
         }
-        const walletLines: string[] = [];
-        for (const chain of chains) {
-          const structured = await this.callSetupAgent({ action: "create_wallet", chain });
-          const wallet = readWallet({ ...structured, chain });
-          if (wallet) this.upsertWallet(wallet);
-          const address = wallet?.address ?? firstString(structured.address, asRecord(structured.wallet)?.address);
-          walletLines.push(`${chainTitle(chain)} trading wallet: ${address ?? "(created)"}`);
+        if (chains.includes("base") && !flow.evmWalletBound) {
+          this.setupFlow = { ...flow, step: "developer-wallet", selectedChains: chains };
+          this.addAgentMessage(`Trading networks selected: ${formatChains(chains)}.
+
+${this.setupPromptFor("developer-wallet")}`);
+          return;
         }
+        if (chains.includes("solana") && !flow.solanaRecoveryWallet && !flow.solanaWalletBound) {
+          this.setupFlow = { ...flow, step: "solana-recovery-wallet", selectedChains: chains };
+          this.addAgentMessage(`Trading networks selected: ${formatChains(chains)}.
+
+${this.setupPromptFor("solana-recovery-wallet")}`);
+          return;
+        }
+        const walletLines = await this.createTradingWalletsForSetup(chains);
         this.setupFlow = {
-          step: chains.includes("solana") ? "solana-recovery-wallet" : "slippage",
+          ...flow,
+          step: "slippage",
           selectedChains: chains,
         };
         this.addAgentMessage(
-          `Trading networks configured: ${formatChains(chains)}.\n\nCopyable trading wallet addresses:\n${walletLines.join("\n")}\n\n${this.setupPromptFor(chains.includes("solana") ? "solana-recovery-wallet" : "slippage")}`,
+          `Trading networks configured: ${formatChains(chains)}.
+
+Copyable trading wallet addresses:
+${walletLines.join("\n")}
+
+${this.setupPromptFor("slippage")}`,
         );
         return;
       }
@@ -911,9 +1038,60 @@ export class AgentBridge {
           this.setupFlow = {
             step: "solana-recovery-wallet",
             ...(flow.developerWallet ? { developerWallet: flow.developerWallet } : {}),
+            ...(flow.rootWalletBound !== undefined ? { rootWalletBound: flow.rootWalletBound } : {}),
+            ...(flow.rootWalletKind ? { rootWalletKind: flow.rootWalletKind } : {}),
+            ...(flow.evmWalletBound !== undefined ? { evmWalletBound: flow.evmWalletBound } : {}),
+            ...(flow.solanaWalletBound !== undefined ? { solanaWalletBound: flow.solanaWalletBound } : {}),
             ...(flow.selectedChains ? { selectedChains: flow.selectedChains } : {}),
           };
           this.addAgentMessage("The Solana wallet confirmation did not match. Paste the Solana recovery/withdrawal wallet again.");
+          return;
+        }
+        if (!flow.rootWalletBound) {
+          const structured = await this.callSetupAgent({
+            action: "bind_solana_root_wallet",
+            solanaWalletAddress: flow.solanaRecoveryWallet,
+            solanaWalletAddressConfirm: wallet,
+          });
+          const masterKey = extractMasterKey(structured);
+          if (masterKey) {
+            this.persistMasterKey(masterKey);
+          }
+          const selectedChains: WalletInfo["chain"][] =
+            flow.selectedChains && flow.selectedChains.length > 0 ? flow.selectedChains : ["solana"];
+          this.setupFlow = {
+            ...flow,
+            step: "networks",
+            solanaRecoveryWallet: wallet,
+            rootWalletBound: true,
+            rootWalletKind: "solana",
+            solanaWalletBound: true,
+            selectedChains,
+          };
+          const walletLines = await this.createTradingWalletsForSetup(selectedChains);
+          this.setupFlow = {
+            ...flow,
+            step: "slippage",
+            solanaRecoveryWallet: wallet,
+            rootWalletBound: true,
+            rootWalletKind: "solana",
+            solanaWalletBound: true,
+            selectedChains,
+          };
+          this.addAgentMessage(
+            `Solana developer/recovery wallet confirmed:
+${wallet}
+
+${masterKey ? `Master key saved encrypted locally and shown here so you can copy it externally:
+${masterKey}
+
+It is shown once in real environments.
+
+` : ""}Copyable trading wallet addresses:
+${walletLines.join("\n")}
+
+${this.setupPromptFor("slippage")}`,
+          );
           return;
         }
         try {
@@ -925,8 +1103,26 @@ export class AgentBridge {
         } catch (err: unknown) {
           this.addSystemMessage(`Solana recovery wallet stored locally for this setup. MCP did not bind it directly: ${err instanceof Error ? err.message : String(err)}`);
         }
-        this.setupFlow = { ...flow, step: "slippage", solanaRecoveryWallet: wallet };
-        this.addAgentMessage(`Solana recovery/withdrawal wallet confirmed:\n${wallet}\n\n${this.setupPromptFor("slippage")}`);
+        const selectedChains = flow.selectedChains && flow.selectedChains.length > 0
+          ? flow.selectedChains
+          : this.selectedChainsForSetup(flow);
+        const walletLines = selectedChains.length > 0
+          ? await this.createTradingWalletsForSetup(selectedChains)
+          : [];
+        this.setupFlow = {
+          ...flow,
+          step: "slippage",
+          solanaRecoveryWallet: wallet,
+          solanaWalletBound: true,
+          ...(selectedChains.length > 0 ? { selectedChains } : {}),
+        };
+        this.addAgentMessage(`Solana recovery/withdrawal wallet confirmed:
+${wallet}
+
+${walletLines.length > 0 ? `Copyable trading wallet addresses:
+${walletLines.join("\n")}
+
+` : ""}${this.setupPromptFor("slippage")}`);
         return;
       }
 
@@ -937,7 +1133,12 @@ export class AgentBridge {
           return;
         }
         await this.callSetupAgent({ action: "configure_slippage", slippageBps: bps });
-        const selectedChains = flow.selectedChains ?? ["solana"];
+        const selectedChains = this.selectedChainsForSetup(flow);
+        if (selectedChains.length === 0) {
+          this.setupFlow = { ...flow, step: "networks" };
+          this.addAgentMessage(`I need the selected trading networks before strategy setup.\n\n${this.setupPromptFor("networks")}`);
+          return;
+        }
         const currentStrategyChain = nextStrategyChain(selectedChains, {}) ?? selectedChains[0];
         this.setupFlow = { ...flow, step: "strategy", slippageBps: bps, currentStrategyChain, chainStrategies: {} };
         this.addAgentMessage(`Slippage set to ${bps} bps.\n\n${this.setupPromptForStrategyChain(currentStrategyChain)}`);
@@ -946,14 +1147,20 @@ export class AgentBridge {
 
       if (flow.step === "strategy") {
         const strategyNote = text.trim();
-        const chain = flow.currentStrategyChain ?? (flow.selectedChains ?? ["solana"])[0];
+        const selectedChainsForFlow = this.selectedChainsForSetup(flow);
+        const chain = flow.currentStrategyChain ?? selectedChainsForFlow[0];
+        if (!chain) {
+          this.setupFlow = { ...flow, step: "networks" };
+          this.addAgentMessage(`I need the selected trading networks before strategy setup.\n\n${this.setupPromptFor("networks")}`);
+          return;
+        }
         if (strategyNote.length < 8) {
           this.addAgentMessage("That is too short for live setup. Add trade size, entry filters, exits, max positions, or avoid rules.");
           return;
         }
         const previousNotes = flow.strategyNotes?.[chain] ?? [];
         const notes = [...previousNotes, strategyNote];
-        const selectedChains = flow.selectedChains ?? [chain];
+        const selectedChains = selectedChainsForFlow.length > 0 ? selectedChainsForFlow : [chain];
         const strategyNotes = {
           ...(flow.strategyNotes ?? {}),
           [chain]: notes,
@@ -1017,12 +1224,14 @@ export class AgentBridge {
             step: "strategy",
             ...(flow.developerWallet ? { developerWallet: flow.developerWallet } : {}),
             ...(flow.solanaRecoveryWallet ? { solanaRecoveryWallet: flow.solanaRecoveryWallet } : {}),
+            ...(flow.rootWalletBound !== undefined ? { rootWalletBound: flow.rootWalletBound } : {}),
+            ...(flow.rootWalletKind ? { rootWalletKind: flow.rootWalletKind } : {}),
             ...(flow.selectedChains ? { selectedChains: flow.selectedChains } : {}),
             ...(flow.slippageBps !== undefined ? { slippageBps: flow.slippageBps } : {}),
             chainStrategies: {},
-            currentStrategyChain: (flow.selectedChains ?? ["solana"])[0],
+            currentStrategyChain: this.selectedChainsForSetup(flow)[0] ?? "solana",
           };
-          this.addAgentMessage(this.setupPromptForStrategyChain((flow.selectedChains ?? ["solana"])[0]));
+          this.addAgentMessage(this.setupPromptForStrategyChain(this.selectedChainsForSetup(flow)[0] ?? "solana"));
           return;
         }
         if (!isAffirmative(text)) {
@@ -1031,7 +1240,7 @@ export class AgentBridge {
         }
         if (!flow.strategyText) {
           this.setupFlow = { ...flow, step: "strategy" };
-          this.addAgentMessage(this.setupPromptForStrategyChain(flow.currentStrategyChain ?? (flow.selectedChains ?? ["solana"])[0]));
+          this.addAgentMessage(this.setupPromptForStrategyChain(flow.currentStrategyChain ?? this.selectedChainsForSetup(flow)[0] ?? "solana"));
           return;
         }
         await this.callSetupAgent({
@@ -1049,7 +1258,7 @@ export class AgentBridge {
 
       if (flow.step === "subscriptions") {
         if (isAffirmative(text)) {
-          const chains = flow.selectedChains ?? ["solana"];
+          const chains = this.selectedChainsForSetup(flow);
           if (chains.includes("solana")) {
             await this.mcp.callTool("create_subscription", {
               type: "new_token_launch",
@@ -1068,7 +1277,7 @@ export class AgentBridge {
         await this.tryStartLoop();
       }
     } catch (err: unknown) {
-      this.addErrorMessage(`Setup failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.addErrorMessage(`Setup failed: ${friendlyError(err).replace(/^LLM error: /, "")}`);
       this.addAgentMessage(`${this.setupPromptFor(this.setupFlow?.step ?? flow.step)} Try again.`);
     }
   }
