@@ -4,188 +4,153 @@
 
 <p align="center">
   <strong>Autonomous AI Trading Agent Platform</strong><br/>
-  Deploy a dual-LLM trading agent on Solana and EVM chains in 5 minutes.
+  Public SDK and CLI for connecting external LLM agents to Balchemy MCP execution.
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/balchemy"><img src="https://img.shields.io/npm/v/balchemy?color=blue&label=balchemy%20(CLI)" alt="npm CLI" /></a>
-  <a href="https://www.npmjs.com/package/@balchemyai/agent-sdk"><img src="https://img.shields.io/npm/v/@balchemyai/agent-sdk?color=blue&label=%40balchemyai%2Fagent-sdk" alt="npm SDK" /></a>
-  <a href="https://www.npmjs.com/package/balchemy"><img src="https://img.shields.io/npm/dt/balchemy?color=green" alt="npm downloads" /></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen" alt="node version" />
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="license" />
-  <a href="https://balchemy.ai"><img src="https://img.shields.io/badge/platform-live-balchemy.ai-purple" alt="platform" /></a>
+  <a href="https://www.npmjs.com/package/balchemy"><img src="https://img.shields.io/npm/v/balchemy?color=blue&label=balchemy%20CLI" alt="balchemy npm version" /></a>
+  <a href="https://www.npmjs.com/package/@balchemyai/agent-sdk"><img src="https://img.shields.io/npm/v/@balchemyai/agent-sdk?color=blue&label=agent-sdk" alt="SDK npm version" /></a>
+  <a href="https://www.npmjs.com/package/balchemy"><img src="https://img.shields.io/npm/dt/balchemy?color=green" alt="balchemy npm downloads" /></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen" alt="Node.js >=18" />
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license" />
+  <a href="https://balchemy.ai"><img src="https://img.shields.io/badge/platform-balchemy.ai-purple" alt="Balchemy platform" /></a>
 </p>
 
 ---
 
 ## Packages
 
-| Package | npm | Description |
-|---------|-----|-------------|
-| [`@balchemyai/agent-sdk`](packages/sdk) | [![npm](https://img.shields.io/npm/v/@balchemyai/agent-sdk)](https://www.npmjs.com/package/@balchemyai/agent-sdk) | TypeScript SDK — MCP client, AgentLoop, onboarding, SSE streaming |
-| [`balchemy`](packages/cli) | [![npm](https://img.shields.io/npm/v/balchemy)](https://www.npmjs.com/package/balchemy) | CLI tool — interactive wizard, TUI, Docker deployment |
+| Package | Latest | Purpose |
+| --- | --- | --- |
+| [`balchemy`](packages/cli) | [npm](https://www.npmjs.com/package/balchemy) | CLI wizard, terminal cockpit, local config, Docker deployment templates |
+| [`@balchemyai/agent-sdk`](packages/sdk) | [npm](https://www.npmjs.com/package/@balchemyai/agent-sdk) | TypeScript SDK for onboarding, MCP calls, SSE streams, and long-running agent loops |
+
+The CLI and SDK are released together. Keep their public versions aligned unless a release note explicitly says otherwise.
 
 ## Quick Start
 
 ```bash
-npx balchemy
+npx balchemy@latest
 ```
 
-The interactive wizard walks you through:
-1. **Pick your LLM** — Anthropic, OpenAI, Gemini, Grok, or OpenRouter
-2. **Set up wallets** — auto-provisioned Solana and EVM wallets
-3. **Define your strategy** — natural language rules
-4. **Start the 24/7 agent loop** — your LLM monitors markets and trades autonomously
+Common commands:
 
 ```bash
-npx balchemy          # Setup wizard or resume cached agent
-npx balchemy init      # Force new setup wizard
-npx balchemy start     # Start from agent.config.yaml
-npx balchemy docker    # Generate Docker files for deployment
+npx balchemy init                 # Start the setup wizard
+npx balchemy start                # Run the TUI from agent.config.yaml
+npx balchemy agent list --json    # Scriptable saved-agent list
+npx balchemy agent current        # Show active local context
+npx balchemy config validate      # Validate local config and env references
+npx balchemy docker --dry-run     # Preview Docker files before writing
+npx balchemy doctor --json        # Machine-readable environment checks
 ```
 
-## What Is Balchemy?
+The terminal flow is designed for safe local setup: preview generated files, keep secrets out of output, and require explicit confirmation for risky execution paths.
 
-Balchemy is an autonomous AI trading platform that connects your LLM to on-chain markets through the Model Context Protocol (MCP). You provide the strategy in natural language; your LLM decides when and what to trade; Balchemy handles wallets, execution, risk checks, and 100+ trading tools.
+## What Balchemy Does
 
-**Architecture — Dual-LLM System:**
-- **External LLM** (your choice: Claude, GPT, Gemini, Grok, OpenRouter) — the brain that makes all decisions
-- **Inner LLM** (GPT-5.4-mini, server-side) — infrastructure servant that fetches data, formats responses, and serves the external LLM
+Balchemy connects an external LLM to on-chain markets through the Model Context Protocol. The external LLM chooses tools and strategy. Balchemy applies scoped credentials, behavior rules, risk checks, execution, verification, and records.
 
-```
-You (strategy) → External LLM (decisions) → Balchemy MCP (execution) → Solana / Base / Ethereum
-                                  ↓
-                        Inner LLM (data fetching, formatting)
-```
-
-## What You Can Do
-
-### Trade
-- **Buy/Sell tokens** — on Solana, Base, and Ethereum
-- **Limit orders** — set price targets, get filled automatically
-- **DCA (Dollar-Cost Averaging)** — schedule recurring buys
-- **Trailing stops** — lock profits as price moves
-
-### Research
-- **Token analysis** — market cap, volume, holder distribution, risk scores
-- **Smart money tracking** — follow profitable wallets
-- **Bundle detection** — spot insider token launches
-- **Price queries** — real-time Solana and EVM token prices
-
-### Manage
-- **Portfolio view** — balances, P&L, positions across chains
-- **Behavior rules** — define trading constraints in natural language
-- **Subscriptions** — set up alerts for market events
-- **24/7 autonomous loop** — your LLM monitors and acts even when you're away
-
-### Built-In Risk Management
-Every trade passes through multi-layer safety checks:
-- **RugCheck integration** — community risk scores
-- **Honeypot detection** — simulated sell before buying
-- **Contract verification** — liquidity locks, ownership renouncing
-- **Behavior rules enforcement** — your constraints are always respected
-
-## SDK Quick Start
-
-```bash
-npm install @balchemyai/agent-sdk
+```text
+Strategy -> external LLM -> Balchemy MCP -> policy/risk -> execution -> record
+                                  |
+                                  v
+                         inner LLM support
 ```
 
-```typescript
-import { BalchemyAgentSdk } from "@balchemyai/agent-sdk";
+The inner LLM is infrastructure support for data fetching and response formatting. It does not make autonomous trading decisions.
 
-const sdk = new BalchemyAgentSdk({
-  apiBaseUrl: "https://api.balchemy.ai/api",
-});
+## CLI Highlights
 
-// SIWE wallet-based onboarding
-const response = await sdk.onboardWithSiwe({
-  message: "SIWE_MESSAGE_FROM_WALLET",
-  signature: "WALLET_SIGNATURE",
-  agentId: "your-agent-id",
-  scope: "trade",
-});
+- Interactive setup wizard for model provider, local config, and strategy rules.
+- TUI cockpit for agent chat, tool activity, settings, and trade confirmation.
+- Structured command architecture for humans and automation.
+- `--json`, `--quiet`, `--verbose`, `--debug`, `--ci`, `--dry-run`, `--yes`, and `--force` where applicable.
+- Secret redaction in terminal and JSON output.
+- Dry-run and overwrite guards for generated deployment files.
+- Typed trade confirmation before live execution.
+- `NO_COLOR=1`, `TERM=dumb`, and non-TTY behavior for CI-safe terminals.
 
-// Connect to MCP
-const mcp = sdk.connectMcp({
-  endpoint: response.mcp.endpoint,
-  apiKey: response.mcp.apiKey,
-});
+See [`packages/cli/README.md`](packages/cli/README.md) for the full command guide.
 
-// Call tools
-const portfolio = await mcp.agentPortfolio();
-const reply = await mcp.askBot({ message: "What is the price of SOL?" });
-const result = await mcp.tradeCommand({ message: "buy 0.1 SOL worth of BONK" });
+## SDK Highlights
+
+- `BalchemyAgentSdk` for SIWE and identity-provider onboarding.
+- Typed MCP client for agent-facing tools.
+- `AgentLoop` for SSE-backed long-running autonomous agents.
+- Retry, error, token-store, and streaming utilities.
+- TypeScript declarations shipped in the npm package.
+
+See [`packages/sdk/README.md`](packages/sdk/README.md) and [`packages/sdk/docs/QUICKSTART.md`](packages/sdk/docs/QUICKSTART.md).
+
+## Agent-Facing MCP Tools
+
+| Tool | Purpose |
+| --- | --- |
+| `trade_command` | Buy, sell, or swap through the approved execution path |
+| `ask_bot` | Natural-language market query support |
+| `agent_research` | Token and market research |
+| `agent_portfolio` | Portfolio, positions, and PnL |
+| `configure_behavior_rules` | Trading constraints in natural language |
+| `get_behavior_rules` | Current active rules |
+| `create_subscription` | Market event subscription |
+| `setup_agent` | Onboarding and runtime setup |
+
+Granular internal tools stay behind the platform boundary. The public SDK and CLI do not contain backend trading internals, private endpoints, privileged workflows, or secrets.
+
+## Safety Model
+
+Every trade path is expected to preserve this shape:
+
+```text
+Intent -> Plan -> Policy -> Execute -> Verify -> Notify
 ```
 
-See [`packages/sdk/README.md`](packages/sdk/README.md) for full API reference, auth paths, SSE streaming, and error handling.
+Safety defaults:
 
-## 100+ MCP Tools
+- External LLMs never receive raw wallet or private-key access.
+- MCP keys are scoped and revocable.
+- Behavior rules constrain execution.
+- Pre-trade checks run before approved execution.
+- CLI trade prompts show agent, host, chain, token, amount, and execution mode before approval.
+- Secrets belong in local `.env` or platform-managed vaults, never in source, logs, prompts, screenshots, npm packages, or generated reports.
 
-| Tool | What It Does |
-|------|-------------|
-| `trade_command` | Execute buy/sell/swap on Solana or EVM |
-| `ask_bot` | Natural language market queries (inner LLM-powered) |
-| `agent_research` | Deep token research with technical analysis |
-| `agent_portfolio` | Portfolio, positions, P&L overview |
-| `configure_behavior_rules` | Set trading constraints in natural language |
-| `get_behavior_rules` | Read current active rules |
-| `create_subscription` | Set up market event alerts |
-| `setup_agent` | Wallet provisioning and onboarding |
+## LLM Providers
 
-Plus 90+ internal tools for research, risk scoring, and execution — your LLM picks the right one from descriptions.
+| Provider | Environment variable |
+| --- | --- |
+| Anthropic | `ANTHROPIC_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| Google Gemini | `GEMINI_API_KEY` |
+| Google Vertex AI | `GOOGLE_APPLICATION_CREDENTIALS` |
+| xAI Grok | `GROK_API_KEY` |
+| OpenRouter | `OPENROUTER_API_KEY` |
 
-## 24/7 Autonomous Mode
+## Repository Layout
 
-```typescript
-import { AgentLoop } from "@balchemyai/agent-sdk";
-
-const loop = new AgentLoop(sdk, { apiKey: "balc_YOUR_KEY" });
-await loop.start(); // SSE event stream + polling cycle
+```text
+packages/cli      balchemy npm package
+packages/sdk      @balchemyai/agent-sdk npm package
 ```
 
-Events flow: Market event → SSE push → Your LLM evaluates → `trade_command` if relevant → Execution → Confirmation push
+Release checklist:
 
-## Security
-
-- **Encrypted credentials** — AES-256-GCM at rest with PBKDF2 key derivation
-- **Scoped API keys** — `read` and `trade` permissions, instant revocation
-- **No seed phrases stored** — all keys encrypted, never logged
-- **Behavior rules** — hard constraints that even your LLM cannot override
-- **Pre-trade safety checks** — RugCheck, honeypot detection, contract verification
-
-## Supported LLM Providers
-
-| Provider | Environment Variable | Notes |
-|-----------|---------------------|-------|
-| Anthropic | `ANTHROPIC_API_KEY` | Haiku 4.5, Sonnet 4.6, Opus 4.6+ |
-| OpenAI | `OPENAI_API_KEY` | GPT-4o, GPT-5.4, etc. |
-| Google Gemini | `GEMINI_API_KEY` | Gemini 3.1 Pro, Flash |
-| xAI Grok | `GROK_API_KEY` | Grok-4-1-fast for research |
-| OpenRouter | `OPENROUTER_API_KEY` | Access to 100+ models |
-| Google Vertex AI | `GOOGLE_APPLICATION_CREDENTIALS` | Gemini 3.1 Pro via Vertex AI |
-
-## Hub Integration
-
-When you bind your EVM wallet during setup, your agent appears in your [Balchemy Hub](https://balchemy.ai/hub) dashboard:
-- **Monitor** — live portfolio, trade history, event log
-- **API Keys** — create, rotate, and revoke MCP keys with scoped permissions
-- **Scope Management** — `read` for data-only, `trade` for full execution
-- **Wallet Management** — link/unlink Solana and EVM wallets
-
-## Built On
-
-Built on [Google Cloud](https://cloud.google.com/) Compute Engine & [Vertex AI](https://cloud.google.com/vertex-ai), powering our dual-LLM architecture and 100+ MCP tool execution pipeline.
+1. Keep CLI and SDK versions aligned for public releases.
+2. Replace workspace dependencies with npm-compatible semver before publishing.
+3. Build and pack both packages before publish.
+4. Publish SDK first when CLI depends on the new SDK version.
+5. Commit source, docs, package metadata, lockfile, and tags in the public repo after npm publish.
+6. Push `main` and release tags so npm's repository links match the published code.
 
 ## Links
 
-- **Platform:** [balchemy.ai](https://balchemy.ai)
-- **Documentation:** [balchemy.ai/hub/docs](https://balchemy.ai/hub/docs)
-- **Agent Explorer:** [balchemy.ai/explorer](https://balchemy.ai/explorer)
-- **GitHub:** [github.com/balchemy/balchemy-agent](https://github.com/balchemy/balchemy-agent)
-- **npm:** [balchemy](https://www.npmjs.com/package/balchemy) · [@balchemyai/agent-sdk](https://www.npmjs.com/package/@balchemyai/agent-sdk)
-- **X:** [@balchemyai](https://x.com/balchemyai)
-- **Contact:** [burak@balchemy.ai](mailto:burak@balchemy.ai)
+- Platform: [balchemy.ai](https://balchemy.ai)
+- Documentation: [balchemy.ai/hub/docs](https://balchemy.ai/hub/docs)
+- Agent Explorer: [balchemy.ai/explorer](https://balchemy.ai/explorer)
+- GitHub: [github.com/balchemy/balchemy-agent](https://github.com/balchemy/balchemy-agent)
+- npm: [balchemy](https://www.npmjs.com/package/balchemy) · [@balchemyai/agent-sdk](https://www.npmjs.com/package/@balchemyai/agent-sdk)
+- X: [@balchemyai](https://x.com/balchemyai)
+- Contact: [burak@balchemy.ai](mailto:burak@balchemy.ai)
 
 ## License
 

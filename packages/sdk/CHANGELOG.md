@@ -7,6 +7,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.2.4] — 2026-05-24
+
+### Changed
+
+- Align SDK public package version with the `balchemy` CLI release line.
+- Refresh public package metadata so npm repository links point to `github.com/balchemy/balchemy-agent`.
+- Keep the SDK release available as the npm-compatible dependency target for `balchemy@0.2.4`.
+
+### Notes
+
+- Public CLI and SDK releases should stay version-aligned unless a release note explicitly says otherwise.
+- CLI packages must depend on the published SDK with npm semver, not `workspace:` ranges.
+
 ## [0.1.0] — 2026-03-15
 
 ### Added
