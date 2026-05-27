@@ -105,7 +105,7 @@ JSON output uses a stable top-level envelope:
 {
   "ok": true,
   "command": "doctor",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "data": {},
   "warnings": [],
   "error": null

@@ -7,6 +7,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.2.5] — 2026-05-28
+
+### Changed
+
+- Align the public SDK and CLI release line with the backend MCP catalog, resource, and prompt hardening shipped after `0.2.4`.
+- Document the stricter observability and telemetry privacy boundary for agent-facing MCP responses.
+- Keep autonomous agent runtime expectations explicit: SDK/CLI clients remain API clients and execution still flows through scoped MCP credentials and server-side safety checks.
+
+### Notes
+
+- No wallet keys, trading internals, or backend policy logic are shipped in the public packages.
+- Publish `@balchemyai/agent-sdk@0.2.5` before `balchemy@0.2.5` so the CLI dependency resolves from npm semver.
+
 ## [0.2.4] — 2026-05-24
 
 ### Changed
