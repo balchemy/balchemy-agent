@@ -40,7 +40,7 @@ const INITIAL_STATUS: StatusData = {
 
 // ── Settings definitions ─────────────────────────────────────────────────────
 
-type AppMode = "chat" | "help" | "settings-select" | "settings-edit-select" | "settings-edit-text" | "settings-edit-apikey";
+type AppMode = "chat" | "activity-focus" | "help" | "settings-select" | "settings-edit-select" | "settings-edit-text" | "settings-edit-apikey";
 
 interface SettingItem {
   key: string;
@@ -121,10 +121,9 @@ export function App({ config }: AppProps): React.ReactElement {
   const mainGap = compactLayout ? 0 : 1;
   const availableWidth = Math.max(18, termWidth - outerPadding);
   const statusWidth = compactLayout ? availableWidth : termWidth >= 148 ? 34 : termWidth >= 124 ? 30 : 28;
-  const activityPanelWidth = compactLayout
+  const baseActivityPanelWidth = compactLayout
     ? availableWidth
     : Math.max(40, availableWidth - statusWidth - mainGap);
-  const chatPanelWidth = Math.max(18, activityPanelWidth - 2);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<StatusData>({
     ...INITIAL_STATUS,
@@ -154,7 +153,7 @@ export function App({ config }: AppProps): React.ReactElement {
   const addMessage = useCallback((msg: ChatMessage) => {
     setMessages((prev) => {
       const next = [...prev, msg];
-      return next.length > 500 ? next.slice(-500) : next;
+      return next.length > 2_000 ? next.slice(-2_000) : next;
     });
   }, []);
 
@@ -260,9 +259,13 @@ export function App({ config }: AppProps): React.ReactElement {
       setAppMode("chat");
       return;
     }
+    if (input === "f" && key.ctrl && (mode === "chat" || mode === "activity-focus")) {
+      setAppMode(mode === "activity-focus" ? "chat" : "activity-focus");
+      return;
+    }
 
     // Only handle shortcuts in chat mode — let Select/TextInput handle keys in settings/help
-    if (mode !== "chat") return;
+    if (mode !== "chat" && mode !== "activity-focus") return;
 
     if (input === "s" && key.ctrl) {
       void openSettings();
@@ -518,7 +521,10 @@ export function App({ config }: AppProps): React.ReactElement {
 
   // ── Render ──────────────────────────────────────────────────────────────
 
-  const inSettings = appMode !== "chat" && appMode !== "help";
+  const activityFocus = appMode === "activity-focus";
+  const activityPanelWidth = activityFocus ? availableWidth : baseActivityPanelWidth;
+  const chatPanelWidth = Math.max(18, activityPanelWidth - 2);
+  const inSettings = appMode !== "chat" && appMode !== "activity-focus" && appMode !== "help";
   const helpVisible = appMode === "help";
   const overlayVisible = inSettings || helpVisible || Boolean(tradeConfirm);
   const chatInputActive = inputActive && !tradeConfirm && !inSettings && !helpVisible;
@@ -536,10 +542,10 @@ export function App({ config }: AppProps): React.ReactElement {
       : "warning";
   const overlayHeight = overlayVisible ? 7 : 0;
   const mainHeight = Math.max(compactLayout ? 12 : 14, termHeight - (compactLayout ? 10 : 8) - overlayHeight);
-  const statusPanelHeight = compactLayout ? Math.min(10, Math.max(7, Math.floor(mainHeight * 0.4))) : mainHeight;
-  const activityHeight = compactLayout ? Math.max(6, mainHeight - statusPanelHeight - 1) : mainHeight;
-  const estimatedMessageRows = compactLayout ? 7 : 8;
-  const chatPageSize = Math.max(1, Math.floor(Math.max(1, activityHeight - 5) / estimatedMessageRows));
+  const visibleStatusHeight = activityFocus ? 0 : Math.min(10, Math.max(7, Math.floor(mainHeight * 0.4)));
+  const statusPanelHeight = compactLayout ? visibleStatusHeight : mainHeight;
+  const activityHeight = activityFocus ? mainHeight : compactLayout ? Math.max(6, mainHeight - statusPanelHeight - 1) : mainHeight;
+  const chatViewportRows = Math.max(3, activityHeight - 5);
   const statusBadgeLabel = truncateMiddle(status.status.toUpperCase(), compactLayout ? 16 : 18);
   const compactHeaderLine = truncateMiddle(
     `${providerLabel} / ${headerModel} · LLM ${headerSpend}`,
@@ -547,8 +553,8 @@ export function App({ config }: AppProps): React.ReactElement {
   );
   const shortcutLine = truncateEnd(
     `${compactLayout
-      ? "^S settings  ? help  ^L clear  ^Q quit  PgUp/PgDn scroll"
-      : "^S settings  ? help  ^L clear  ^N new  ^Q quit  PgUp/PgDn scroll"}${overlayVisible ? "  ESC back" : ""}`,
+      ? "^S settings  ^F focus  ? help  ^L clear  ^Q quit  PgUp/PgDn transcript"
+      : "^S settings  ^F activity focus  ? help  ^L clear  ^N new  ^Q quit  PgUp/PgDn transcript"}${overlayVisible ? "  ESC back" : ""}`,
     overlayContentWidth,
   );
 
@@ -600,24 +606,24 @@ export function App({ config }: AppProps): React.ReactElement {
 
       {/* Main content */}
       <Box flexDirection={compactLayout ? "column" : "row"} height={mainHeight} paddingX={1} gap={mainGap}>
-        {compactLayout && <StatusPanel status={status} width={statusWidth} compact={compactLayout} height={statusPanelHeight} />}
+        {compactLayout && !activityFocus && <StatusPanel status={status} width={statusWidth} compact={compactLayout} height={statusPanelHeight} />}
         <Box flexDirection="column" width={activityPanelWidth} flexShrink={0} height={activityHeight} borderStyle="round" borderColor="gray" paddingY={0}>
           <Box paddingX={1}>
             <Text color="white" bold>Activity</Text>
-            {!compactLayout && <Text dimColor>  chat, tool traces and live decisions</Text>}
+            {!compactLayout && <Text dimColor>{activityFocus ? "  focus mode: transcript-only selection" : "  chat, tool traces and live decisions"}</Text>}
           </Box>
           <ChatPanel
             messages={messages}
             onSend={handleSend}
             inputActive={chatInputActive}
             hideInput={overlayVisible}
-            pageSize={chatPageSize}
+            pageSize={chatViewportRows}
             inputPlaceholder="Ask, adjust rules, or inspect this session..."
             width={chatPanelWidth}
             thinking={thinking}
           />
         </Box>
-        {!compactLayout && <StatusPanel status={status} width={statusWidth} compact={compactLayout} height={statusPanelHeight} />}
+        {!compactLayout && !activityFocus && <StatusPanel status={status} width={statusWidth} compact={compactLayout} height={statusPanelHeight} />}
       </Box>
 
       {/* Help panel — replaces input area when active */}
@@ -630,7 +636,8 @@ export function App({ config }: AppProps): React.ReactElement {
           <KeyHelpRow keys="Ctrl+S" label="Open session settings for provider, model, limits, slippage and strategy." width={overlayContentWidth} />
           <KeyHelpRow keys="Ctrl+L" label="Clear visible chat activity without changing agent state." width={overlayContentWidth} />
           {!compactLayout && <KeyHelpRow keys="Ctrl+N" label="Return to launcher and choose or create another saved agent." width={overlayContentWidth} />}
-          <KeyHelpRow keys="PgUp/PgDn" label="Scroll activity history while keeping new events stable." width={overlayContentWidth} />
+          <KeyHelpRow keys="Ctrl+F" label="Toggle Activity focus so mouse selection only covers the transcript panel." width={overlayContentWidth} />
+          <KeyHelpRow keys="PgUp/PgDn" label="Scroll the transcript by rendered rows while keeping the prompt clean." width={overlayContentWidth} />
           <KeyHelpRow keys="Esc / ?" label="Close this panel; trade prompts only execute when you type TRADE." width={overlayContentWidth} />
         </Box>
       )}

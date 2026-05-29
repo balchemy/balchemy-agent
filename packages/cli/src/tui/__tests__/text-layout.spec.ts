@@ -6,6 +6,12 @@ import {
   truncateMiddle,
   wrapText,
 } from "../text-layout.js";
+import {
+  buildTranscriptRows,
+  getTranscriptViewport,
+  isTerminalControlInput,
+} from "../ChatPanel.js";
+import type { TranscriptRow } from "../ChatPanel.js";
 
 const LONG_SOLANA_ADDRESS = "Gn3SVaU82oGS1yb28HqNw3fYQR6MsvECofaacbd9Xq8S";
 const LONG_BASE_ADDRESS = "0x1111111111111111111111111111111111111111";
@@ -52,4 +58,59 @@ test("truncate helpers respect unicode display width", () => {
     assert.ok(displayWidth(truncateEnd(text, width)) <= width);
     assert.ok(displayWidth(truncateMiddle(text, width)) <= width);
   }
+});
+
+test("transcript rows preserve long primary chat text without activity trim marker", () => {
+  const longMessage = Array.from({ length: 40 }, (_, index) => `satır-${index}`).join(" ");
+  const rows = buildTranscriptRows(
+    [
+      {
+        id: "msg-1",
+        type: "agent",
+        text: longMessage,
+        timestamp: Date.parse("2026-02-11T00:00:00.000Z"),
+      },
+    ],
+    24,
+  );
+
+  const bodyRows = rows.filter((row): row is Extract<TranscriptRow, { kind: "body" }> => row.kind === "body");
+  const bodyText = bodyRows.map((row) => row.text).join(" ");
+
+  assert.ok(rows.length > 8);
+  assert.ok(!bodyText.includes("trimmed in activity log"));
+  assert.ok(bodyText.includes("satır-0"));
+  assert.ok(bodyText.includes("satır-39"));
+});
+
+test("terminal control input detection filters paging escape fragments", () => {
+  for (const input of ["[5~", "[6~", "[5~", "[6~", "5~", "6~", "OA"]) {
+    assert.equal(isTerminalControlInput(input), true);
+  }
+
+  for (const input of ["buy SOL", "what can you do?", ">"]) {
+    assert.equal(isTerminalControlInput(input), false);
+  }
+});
+
+test("transcript viewport scrolls by rendered rows", () => {
+  const rows = buildTranscriptRows(
+    [
+      {
+        id: "msg-1",
+        type: "agent",
+        text: Array.from({ length: 20 }, (_, index) => `token-${index}`).join(" "),
+        timestamp: Date.parse("2026-02-11T00:00:00.000Z"),
+      },
+    ],
+    18,
+  );
+
+  const bottom = getTranscriptViewport(rows, 4, 0);
+  const older = getTranscriptViewport(rows, 4, 3);
+
+  assert.equal(bottom.visibleRows.length, 4);
+  assert.equal(older.visibleRows.length, 4);
+  assert.ok(older.end < bottom.end);
+  assert.ok(older.scrollOffset > 0);
 });

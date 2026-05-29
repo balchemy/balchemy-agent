@@ -1,7 +1,6 @@
-// src/tui/ChatPanel.tsx — Polished activity surface with compact message cards
+// src/tui/ChatPanel.tsx — Polished activity surface with transcript scrolling
 import React, { useState, useCallback, useEffect, useRef } from "react";
 import { Box, Text, useInput } from "ink";
-import { TextInput } from "@inkjs/ui";
 import type { ChatMessage } from "./types.js";
 import { displayWidth, truncateEnd, truncateMiddle, wrapText } from "./text-layout.js";
 
@@ -12,7 +11,14 @@ function formatTime(ts: number): string {
   });
 }
 
-function getSystemMeta(text: string): { label: string; color: "cyan" | "yellow" | "white"; body: string } {
+type TextTone = "white" | "red" | "green" | "yellow" | "cyan";
+
+export type TranscriptRow =
+  | { kind: "header"; id: string; label: string; labelColor: TextTone; time: string }
+  | { kind: "body"; id: string; text: string; color: TextTone; bold?: boolean }
+  | { kind: "system"; id: string; label: string; labelColor: TextTone; time: string; body: string };
+
+function getSystemMeta(text: string): { label: string; color: TextTone; body: string } {
   if (text.startsWith("Tool:")) {
     return {
       label: "TOOL",
@@ -36,132 +42,142 @@ function getSystemMeta(text: string): { label: string; color: "cyan" | "yellow" 
   };
 }
 
-function compactText(text: string, maxChars: number): string {
-  const normalized = text.replace(/\n{3,}/g, "\n\n");
-  if (normalized.length <= maxChars) return normalized;
-  return `${normalized.slice(0, maxChars - 24).trimEnd()}\n... trimmed in activity log`;
+function compactSystemText(text: string): string {
+  return text.replace(/\n{2,}/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function WrappedText({
-  text,
-  width,
-  color,
-  bold = false,
-  maxLines,
-}: {
-  text: string;
-  width: number;
-  color: "white" | "red" | "green" | "yellow" | "cyan";
-  bold?: boolean;
-  maxLines?: number;
-}): React.ReactElement {
-  const lines = wrapText(text, width, maxLines);
-  return (
-    <Box flexDirection="column" width={width}>
-      {lines.map((line, index) => (
-        <Text key={`${index}-${line}`} color={color} bold={bold}>{line}</Text>
-      ))}
-    </Box>
-  );
-}
-
-interface MessageCardProps {
-  label: string;
-  labelColor: "cyan" | "yellow" | "green" | "red" | "white";
-  msg: ChatMessage;
-  width: number;
-  children: React.ReactNode;
-}
-
-function MessageCard({
-  label,
-  labelColor,
-  msg,
-  width,
-  children,
-}: MessageCardProps): React.ReactElement {
-  return (
-    <Box flexDirection="column" marginBottom={0} width={width}>
-      <Box marginBottom={0}>
-        <Text color={labelColor} bold>{label}</Text>
-        <Text dimColor>  {formatTime(msg.timestamp)}</Text>
-      </Box>
-      <Box paddingLeft={1} width={width}>
-        {children}
-      </Box>
-    </Box>
-  );
-}
-
-function AgentMsg({ msg, width }: { msg: ChatMessage; width: number }): React.ReactElement {
-  return (
-    <MessageCard label="AI" labelColor="cyan" msg={msg} width={width}>
-      <WrappedText color="white" width={Math.max(8, width - 1)} text={compactText(msg.text, 1200)} maxLines={16} />
-    </MessageCard>
-  );
-}
-
-function UserMsg({ msg, width }: { msg: ChatMessage; width: number }): React.ReactElement {
-  return (
-    <MessageCard label="YOU" labelColor="yellow" msg={msg} width={width}>
-      <WrappedText color="white" width={Math.max(8, width - 1)} text={compactText(msg.text, 600)} maxLines={10} />
-    </MessageCard>
-  );
-}
-
-function SystemMsg({ msg, width }: { msg: ChatMessage; width: number }): React.ReactElement {
-  const meta = getSystemMeta(msg.text);
-  const prefix = `${meta.label}  ${formatTime(msg.timestamp)}  `;
-  const bodyWidth = Math.max(0, width - displayWidth(prefix));
-  const bodyText = compactText(meta.body, 400).replace(/\s+/g, " ");
-  const body = bodyWidth > 0 ? truncateMiddle(bodyText, bodyWidth) : "";
-
-  return (
-    <Box marginBottom={0} width={width}>
-      <Text color={meta.color} bold>{meta.label}</Text>
-      <Text dimColor>  {formatTime(msg.timestamp)}  </Text>
-      {body.length > 0 && <Text dimColor>{body}</Text>}
-    </Box>
-  );
-}
-
-function TradeMsg({ msg, width }: { msg: ChatMessage; width: number }): React.ReactElement {
-  const isBuy = msg.action === "buy";
-  const color = isBuy ? "green" : "red";
-
-  return (
-    <MessageCard
-      label={isBuy ? "BUY" : "SELL"}
-      labelColor={color}
-      msg={msg}
-      width={width}
-    >
-      <WrappedText color={color} bold width={Math.max(8, width - 1)} text={compactText(msg.text, 600)} maxLines={10} />
-    </MessageCard>
-  );
-}
-
-function ErrorMsg({ msg, width }: { msg: ChatMessage; width: number }): React.ReactElement {
-  return (
-    <MessageCard label="ERROR" labelColor="red" msg={msg} width={width}>
-      <WrappedText color="red" width={Math.max(8, width - 1)} text={compactText(msg.text, 800)} maxLines={10} />
-    </MessageCard>
-  );
-}
-
-function MessageLine({ msg, width }: { msg: ChatMessage; width: number }): React.ReactElement {
+function messageStyle(msg: ChatMessage): { label: string; color: TextTone; bold?: boolean } {
   switch (msg.type) {
-    case "agent": return <AgentMsg msg={msg} width={width} />;
-    case "user": return <UserMsg msg={msg} width={width} />;
-    case "trade": return <TradeMsg msg={msg} width={width} />;
-    case "error": return <ErrorMsg msg={msg} width={width} />;
-    default: return <SystemMsg msg={msg} width={width} />;
+    case "agent":
+      return { label: "AI", color: "cyan" };
+    case "user":
+      return { label: "YOU", color: "yellow" };
+    case "trade": {
+      const color = msg.action === "buy" ? "green" : "red";
+      return { label: msg.action === "buy" ? "BUY" : "SELL", color, bold: true };
+    }
+    case "error":
+      return { label: "ERROR", color: "red" };
+    default:
+      return { label: "NOTE", color: "white" };
   }
 }
 
-// ── Thinking indicator ──────────────────────────────────────────────────────
+function buildSystemRow(msg: ChatMessage, width: number): TranscriptRow {
+  const meta = getSystemMeta(msg.text);
+  const time = formatTime(msg.timestamp);
+  const prefix = `${meta.label}  ${time}  `;
+  const bodyWidth = Math.max(0, width - displayWidth(prefix));
+  const bodyText = compactSystemText(meta.body);
+  return {
+    kind: "system",
+    id: `${msg.id}:system`,
+    label: meta.label,
+    labelColor: meta.color,
+    time,
+    body: bodyWidth > 0 ? truncateMiddle(bodyText, bodyWidth) : "",
+  };
+}
+
+export function buildTranscriptRows(messages: ChatMessage[], width: number): TranscriptRow[] {
+  const messageWidth = Math.max(8, width);
+  const bodyWidth = Math.max(8, messageWidth - 1);
+  const rows: TranscriptRow[] = [];
+
+  for (const msg of messages) {
+    if (msg.type === "system") {
+      rows.push(buildSystemRow(msg, messageWidth));
+      continue;
+    }
+
+    const style = messageStyle(msg);
+    rows.push({
+      kind: "header",
+      id: `${msg.id}:header`,
+      label: style.label,
+      labelColor: style.color,
+      time: formatTime(msg.timestamp),
+    });
+
+    const bodyRows = wrapText(msg.text, bodyWidth);
+    bodyRows.forEach((line, index) => {
+      rows.push({
+        kind: "body",
+        id: `${msg.id}:body:${index}`,
+        text: line,
+        color: msg.type === "error" ? "red" : msg.type === "trade" ? style.color : "white",
+        bold: style.bold,
+      });
+    });
+  }
+
+  return rows;
+}
+
+export function getTranscriptViewport(
+  rows: TranscriptRow[],
+  viewportRows: number,
+  scrollOffset: number,
+): {
+  visibleRows: TranscriptRow[];
+  start: number;
+  end: number;
+  maxScroll: number;
+  scrollOffset: number;
+} {
+  const visibleCount = Math.max(1, viewportRows);
+  const maxScroll = Math.max(0, rows.length - visibleCount);
+  const clampedOffset = Math.min(Math.max(0, scrollOffset), maxScroll);
+  const end = Math.max(0, rows.length - clampedOffset);
+  const start = Math.max(0, end - visibleCount);
+  return {
+    visibleRows: rows.slice(start, end),
+    start,
+    end,
+    maxScroll,
+    scrollOffset: clampedOffset,
+  };
+}
+
+function TranscriptLine({ row, width }: { row: TranscriptRow; width: number }): React.ReactElement {
+  if (row.kind === "system") {
+    return (
+      <Box marginBottom={0} width={width}>
+        <Text color={row.labelColor} bold>{row.label}</Text>
+        <Text dimColor>  {row.time}  </Text>
+        {row.body.length > 0 && <Text dimColor>{row.body}</Text>}
+      </Box>
+    );
+  }
+
+  if (row.kind === "header") {
+    return (
+      <Box marginBottom={0} width={width}>
+        <Text color={row.labelColor} bold>{row.label}</Text>
+        <Text dimColor>  {row.time}</Text>
+      </Box>
+    );
+  }
+
+  return (
+    <Box paddingLeft={1} width={width}>
+      <Text color={row.color} bold={row.bold}>{row.text}</Text>
+    </Box>
+  );
+}
 
 const THINKING_FRAMES = ["·  ", "·· ", "···", " ··", "  ·"];
+const CSI_FRAGMENT_PATTERN = /^(?:\[(?:5|6)(?:;\d+)?~|(?:5|6)(?:;\d+)?~|\[\d*[A-Za-z~]|O[A-Za-z])$/;
+
+export function isTerminalControlInput(input: string): boolean {
+  const value = input.replace(/[\r\n]/g, "");
+  if (value.length === 0) return false;
+  for (const character of value) {
+    const code = character.charCodeAt(0);
+    if (code < 32 || (code >= 127 && code <= 159)) return true;
+  }
+  return CSI_FRAGMENT_PATTERN.test(value);
+}
 
 function ThinkingIndicator({ width }: { width: number }): React.ReactElement {
   const [frame, setFrame] = useState(0);
@@ -182,9 +198,7 @@ function ThinkingIndicator({ width }: { width: number }): React.ReactElement {
   );
 }
 
-// ── ChatPanel ────────────────────────────────────────────────────────────────
-
-const SCROLL_STEP = 5;
+const MIN_SCROLL_STEP = 6;
 
 interface ChatPanelProps {
   messages: ChatMessage[];
@@ -207,9 +221,9 @@ export function ChatPanel({
   width,
   thinking = false,
 }: ChatPanelProps): React.ReactElement {
-  const [inputKey, setInputKey] = useState(0);
+  const [inputValue, setInputValue] = useState("");
   const [scrollOffset, setScrollOffset] = useState(0);
-  const prevCount = useRef(messages.length);
+  const prevRowCount = useRef(0);
   const panelWidth = Math.max(18, width);
   const historyWidth = Math.max(8, panelWidth - 2);
   const messageWidth = Math.max(8, historyWidth);
@@ -217,92 +231,117 @@ export function ChatPanel({
   const promptLabelWidth = 8;
   const promptContentWidth = Math.max(8, promptWidth - 4);
   const promptValueWidth = Math.max(4, promptContentWidth - promptLabelWidth);
+  const viewportRows = Math.max(1, pageSize);
+  const transcriptRows = buildTranscriptRows(messages, messageWidth);
+  const viewport = getTranscriptViewport(transcriptRows, viewportRows, scrollOffset);
+  const scrollStep = Math.max(MIN_SCROLL_STEP, viewportRows - 1);
+  const promptTextWidth = Math.max(1, promptValueWidth - 1);
   const placeholder = truncateEnd(
     inputPlaceholder ?? "Ask, adjust rules, or inspect...",
-    promptValueWidth,
+    promptTextWidth,
   );
+  const visibleInput = inputValue.length > 0
+    ? truncateEnd(inputValue, promptTextWidth)
+    : placeholder;
 
-  // Auto-scroll to bottom on new messages (only if already at bottom)
   useEffect(() => {
-    if (messages.length > prevCount.current && scrollOffset === 0) {
-      // Already at bottom — stay there (no-op)
-    } else if (messages.length > prevCount.current && scrollOffset > 0) {
-      // New message arrived while scrolled up — keep position stable
-      setScrollOffset((prev) => prev + (messages.length - prevCount.current));
+    const previous = prevRowCount.current;
+    const delta = transcriptRows.length - previous;
+    if (delta > 0 && scrollOffset > 0) {
+      setScrollOffset((prev) => Math.min(prev + delta, Math.max(0, transcriptRows.length - viewportRows)));
+    } else if (scrollOffset > viewport.maxScroll) {
+      setScrollOffset(viewport.maxScroll);
     }
-    prevCount.current = messages.length;
-  }, [messages.length, scrollOffset]);
+    prevRowCount.current = transcriptRows.length;
+  }, [transcriptRows.length, scrollOffset, viewport.maxScroll, viewportRows]);
 
-  // PgUp / PgDn scroll
-  useInput((_input, key) => {
+  const handleSubmit = useCallback(async () => {
+    const value = inputValue.trim();
+    if (!value) return;
+    setInputValue("");
+    setScrollOffset(0);
+    await onSend(value);
+  }, [inputValue, onSend]);
+
+  useInput((input, key) => {
     if (key.pageUp) {
-      setScrollOffset((prev) => Math.min(prev + SCROLL_STEP, Math.max(0, messages.length - pageSize)));
+      setScrollOffset((prev) => Math.min(prev + scrollStep, viewport.maxScroll));
       return;
     }
     if (key.pageDown) {
-      setScrollOffset((prev) => Math.max(0, prev - SCROLL_STEP));
+      setScrollOffset((prev) => Math.max(0, prev - scrollStep));
       return;
+    }
+
+    if (!inputActive || hideInput) return;
+
+    if (key.return) {
+      void handleSubmit();
+      return;
+    }
+    if (key.backspace || key.delete) {
+      setInputValue((prev) => prev.slice(0, -1));
+      return;
+    }
+    if (
+      key.escape
+      || key.tab
+      || key.upArrow
+      || key.downArrow
+      || key.leftArrow
+      || key.rightArrow
+      || key.ctrl
+      || isTerminalControlInput(input)
+    ) {
+      return;
+    }
+
+    const printable = input.replace(/[\r\n]/g, "");
+    if (printable.length > 0) {
+      setInputValue((prev) => `${prev}${printable}`);
     }
   });
 
-  // Calculate visible window
-  const total = messages.length;
-  const end = total - scrollOffset;
-  const start = Math.max(0, end - pageSize);
-  const visibleMessages = messages.slice(start, Math.max(end, 0));
-  const hasOlder = start > 0;
-  const isAtBottom = scrollOffset === 0;
-
-  const handleSubmit = useCallback(async (value: string) => {
-    if (value.trim()) {
-      setInputKey((k) => k + 1);
-      setScrollOffset(0); // Jump to bottom on send
-      await onSend(value.trim());
-    }
-  }, [onSend]);
+  const hasOlder = viewport.start > 0;
+  const isAtBottom = viewport.scrollOffset === 0;
 
   return (
     <Box flexDirection="column" width={panelWidth} flexGrow={1}>
-      {/* Scroll-up indicator */}
       {hasOlder && (
         <Box paddingX={1} flexShrink={0}>
-          <Text dimColor>{truncateEnd(`↑ ${start} earlier items · PgUp`, historyWidth)}</Text>
+          <Text dimColor>{truncateEnd(`↑ ${viewport.start} earlier rows · PgUp`, historyWidth)}</Text>
         </Box>
       )}
 
-      {/* Message history — fills all available space, messages align to bottom */}
       <Box flexDirection="column" flexGrow={1} overflowY="hidden" paddingX={1} justifyContent="flex-end" width={panelWidth}>
-        {visibleMessages.length === 0 && !thinking && (
+        {viewport.visibleRows.length === 0 && !thinking && (
           <Box flexDirection="column" marginBottom={1} width={messageWidth}>
             <Text color="white" bold>No activity yet</Text>
             <Text dimColor>{truncateEnd("Try: 'check my portfolio' or 'what can you do?'", messageWidth)}</Text>
           </Box>
         )}
-        {visibleMessages.map((msg) => (
-          <MessageLine key={msg.id} msg={msg} width={messageWidth} />
+        {viewport.visibleRows.map((row) => (
+          <TranscriptLine key={row.id} row={row} width={messageWidth} />
         ))}
         {thinking && <ThinkingIndicator width={messageWidth} />}
       </Box>
 
-      {/* Scroll-down indicator */}
       {!isAtBottom && (
         <Box paddingX={1} flexShrink={0}>
-          <Text dimColor>{truncateEnd(`↓ ${scrollOffset} newer items · PgDn`, historyWidth)}</Text>
+          <Text dimColor>{truncateEnd(`↓ ${viewport.scrollOffset} newer rows · PgDn`, historyWidth)}</Text>
         </Box>
       )}
 
-      {/* Prompt — pinned to bottom */}
       {!hideInput && (
         <Box paddingX={1} paddingY={0} width={panelWidth} flexShrink={0}>
           <Box borderStyle="round" borderColor={inputActive ? "cyan" : "gray"} paddingX={1} width={promptWidth} flexShrink={0}>
             <Text color={inputActive ? "cyan" : "gray"} bold>Prompt</Text>
             <Text dimColor>  </Text>
             {inputActive ? (
-              <TextInput
-                key={inputKey}
-                placeholder={placeholder}
-                onSubmit={handleSubmit}
-              />
+              <Box width={promptValueWidth}>
+                <Text dimColor={inputValue.length === 0}>{visibleInput}</Text>
+                <Text color="cyan">▌</Text>
+              </Box>
             ) : (
               <Text dimColor>{truncateEnd("Starting agent session...", promptValueWidth)}</Text>
             )}

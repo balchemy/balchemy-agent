@@ -7,6 +7,18 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.2.6] — 2026-05-29
+
+### Changed
+
+- Align the public SDK and CLI release line after backend readiness healthcheck hardening.
+- Keep the CLI dependency on the published SDK semver range for npm install compatibility.
+
+### Notes
+
+- No wallet keys, trading internals, or backend policy logic are shipped in the public packages.
+- Publish `@balchemyai/agent-sdk@0.2.6` before `balchemy@0.2.6` so the CLI dependency resolves from npm semver.
+
 ## [0.2.5] — 2026-05-28
 
 ### Changed

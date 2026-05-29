@@ -16,7 +16,22 @@ import { buildStrategyUpdateArgs } from "./session-sync.js";
 import { loadAgent, saveAgent, type StoredAgent } from "../agent-store.js";
 import { resolveProviderLabel } from "./utils.js";
 
-/** Truncate verbose API errors (429 JSON blobs, stack traces) to a readable one-liner. */
+function stringifyUnknownError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    const json = JSON.stringify(error);
+    return typeof json === "string" ? json : String(error);
+  } catch (_error: unknown) {
+    return String(error);
+  }
+}
+
+function isMcpScopeError(error: unknown): boolean {
+  const raw = stringifyUnknownError(error);
+  return /insufficient(?:\s|_)+mcp(?:\s|_)+key(?:\s|_)+scope|insufficient(?:\s|_)+scope|\b403\b/i.test(raw);
+}
+
 function truncateError(raw: string): string {
   // Extract HTTP status code if present
   const statusMatch = raw.match(/\b(4\d{2}|5\d{2})\b/);
@@ -514,6 +529,7 @@ export class AgentBridge {
   private pendingLoopConfig: AgentLoopConfig | null = null;
   private setupPollTimer: NodeJS.Timeout | null = null;
   private setupFlow: SetupFlowState | null = null;
+  private setupStatusUnavailableForScope = false;
   private knownWallets: WalletInfo[] = [];
 
   constructor(config: TuiConfig, setters: StateSetters) {
@@ -628,12 +644,23 @@ export class AgentBridge {
     // Store loop config — may start later after setup completes in-session
     this.pendingLoopConfig = loopConfig;
 
-    // Only start AgentLoop if setup is complete
-    if (setupComplete) {
+    const setupStatusScopeBlocked = !setupComplete && this.setupStatusUnavailableForScope;
+    const canResumeWithoutSetupStatus = setupStatusScopeBlocked && this.knownWallets.length > 0;
+
+    // Only start AgentLoop if setup is complete or local resumed state proves this is not first-time setup.
+    if (setupComplete || canResumeWithoutSetupStatus) {
       this.setters.setStatus((prev) => ({ ...prev, status: "connecting" }));
-      await this.ensureDefaultSubscriptions();
+      if (!canResumeWithoutSetupStatus) {
+        await this.ensureDefaultSubscriptions();
+      }
       this.loop = new AgentLoop(loopConfig);
       await this.loop.start();
+    } else if (setupStatusScopeBlocked) {
+      this.setters.setStatus((prev) => ({
+        ...prev,
+        sseConnected: false,
+        status: "setup-scope-required",
+      }));
     } else {
       this.setters.setStatus((prev) => ({
         ...prev,
@@ -652,8 +679,13 @@ export class AgentBridge {
     this.syncKnownWalletsToStatus();
 
     // Input is ready now. Setup must be deterministic; do not let an LLM drive it.
-    if (setupComplete) {
+    if (setupComplete || canResumeWithoutSetupStatus) {
+      if (canResumeWithoutSetupStatus) {
+        this.addSystemMessage("Existing agent resumed from local wallet state. Setup status requires a higher-scope MCP key, so first-time setup prompts are disabled for this session.");
+      }
       void this.greet(true);
+    } else if (setupStatusScopeBlocked) {
+      this.addAgentMessage("This saved agent was opened with an MCP key that cannot read or mutate setup status. I will not restart first-time setup or ask for owner wallets with this key. Switch to a setup/manage key in settings if you need to finish setup.");
     } else {
       this.beginSetupFlow(setupStatus);
     }
@@ -750,6 +782,15 @@ export class AgentBridge {
   private async tryStartLoop(): Promise<void> {
     if (this.loop || !this.pendingLoopConfig || this.setupFlow) return;
     const setupStatus = await this.fetchSetupStatus();
+    if (this.setupStatusUnavailableForScope) {
+      if (this.setupPollTimer) {
+        clearInterval(this.setupPollTimer);
+        this.setupPollTimer = null;
+      }
+      this.setters.setStatus((prev) => ({ ...prev, sseConnected: false, status: "setup-scope-required" }));
+      this.addAgentMessage("Setup status now requires a higher-scope MCP key. I will not restart setup or ask for owner wallets with this key.");
+      return;
+    }
     const nowComplete = this.isSetupComplete(setupStatus);
     if (nowComplete) {
       await this.ensureDefaultSubscriptions();
@@ -1401,13 +1442,22 @@ ${walletLines.join("\n")}
   }
 
   private buildRuntimeContext(): string {
-    if (this.knownWallets.length === 0) return "";
-    return [
-      "Known Balchemy runtime context from local encrypted CLI state:",
-      ...this.knownWallets.map((wallet) => `${walletAddressLabel(wallet.chain)}: ${wallet.address}`),
-      "Funding rule: fund the Solana trading wallet with SOL. Fund the Base trading wallet with ETH on Base for gas and Base-chain capital as required.",
-      "If the user asks where to fund, answer from these addresses.",
-    ].join("\n");
+    const lines: string[] = [];
+    if (this.knownWallets.length > 0) {
+      lines.push(
+        "Known Balchemy runtime context from local encrypted CLI state:",
+        ...this.knownWallets.map((wallet) => `${walletAddressLabel(wallet.chain)}: ${wallet.address}`),
+        "Funding rule: fund the Solana trading wallet with SOL. Fund the Base trading wallet with ETH on Base for gas and Base-chain capital as required.",
+        "If the user asks where to fund, answer from these addresses.",
+      );
+    }
+    if (this.setupStatusUnavailableForScope) {
+      lines.push(
+        "Setup status could not be read because this MCP key lacks setup scope.",
+        "Do not call setup_agent or ask for owner/recovery wallets unless the user first switches to a setup/manage-scope key.",
+      );
+    }
+    return lines.join("\n");
   }
 
   private withRuntimeContext(userMessage: string): string {
@@ -1462,9 +1512,16 @@ ${walletLines.join("\n")}
       const text = resp.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
       let parsed: Record<string, unknown>;
       try { parsed = JSON.parse(text) as Record<string, unknown>; } catch (_error: unknown) { parsed = {}; }
-      const structured = parsed.structured as Record<string, unknown> | undefined;
-      return parseSetupStatusSnapshot(structured);
-    } catch (_error: unknown) {
+      const structured = asRecord(parsed.structured);
+      if (parsed.ok === false || structured?.error) {
+        const error = structured?.error ?? parsed.error ?? "setup_agent rejected get_status";
+        this.setupStatusUnavailableForScope = isMcpScopeError(error);
+        return null;
+      }
+      this.setupStatusUnavailableForScope = false;
+      return parseSetupStatusSnapshot(structured ?? undefined);
+    } catch (error: unknown) {
+      this.setupStatusUnavailableForScope = isMcpScopeError(error);
       return null;
     }
   }

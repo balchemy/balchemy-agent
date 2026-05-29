@@ -4,188 +4,220 @@
 
 <p align="center">
   <strong>Balchemy CLI</strong><br/>
-  A terminal-first setup wizard and TUI cockpit for autonomous Balchemy agents.
+  Initialize a local trading agent, connect model credentials, set risk rules, and generate deployment files.
 </p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/balchemy"><img src="https://img.shields.io/npm/v/balchemy?color=blue&label=npm" alt="npm version" /></a>
   <a href="https://www.npmjs.com/package/balchemy"><img src="https://img.shields.io/npm/dt/balchemy?color=green" alt="npm downloads" /></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen" alt="Node.js >=18" />
-  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license" />
+  <img src="https://img.shields.io/badge/node-%3E%3D18-brightgreen" alt="node version" />
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="license" />
+  <a href="https://balchemy.ai"><img src="https://img.shields.io/badge/platform-live-balchemy.ai-purple" alt="platform" /></a>
 </p>
 
 ---
 
-## Install
+## What Balchemy Does
+
+Balchemy connects an external LLM to on-chain markets through MCP. The outer LLM
+chooses tools and instructions. Balchemy applies scopes, behavior rules, risk
+checks, execution, and records.
+
+The inner LLM is infrastructure support. It fetches data and formats responses.
+It does not make trading decisions.
+
+```text
+Strategy -> external LLM -> Balchemy MCP -> policy -> execution -> record
+                                  |
+                                  v
+                         inner LLM support
+```
+
+## Quick Start
 
 ```bash
-npx balchemy@latest
+npx balchemy
 ```
 
-Or install globally:
+The wizard handles five local steps:
+
+1. Choose an LLM provider.
+2. Add the provider API key.
+3. Set wallet and chain preferences.
+4. Define behavior rules in plain language.
+5. Start or export the agent runtime.
+
+## Commands
 
 ```bash
-npm install -g balchemy@latest
-balchemy --help
+npx balchemy              # Setup wizard or resume cached agent
+npx balchemy init         # New setup wizard
+npx balchemy start        # Start from agent.config.yaml
+npx balchemy list         # List saved agents
+npx balchemy docker       # Generate Docker files
+npx balchemy --help       # Usage
+npx balchemy --version    # Version
+npx balchemy --no-color   # Disable color output
 ```
 
-## What The CLI Does
-
-The CLI creates and runs local Balchemy agent workspaces. It helps you:
-
-- choose an LLM provider;
-- store local runtime credentials safely;
-- generate `agent.config.yaml` and `.env`;
-- start the Ink-based terminal cockpit;
-- preview Docker deployment files before writing;
-- inspect local agent context in human or JSON output;
-- confirm risky trade paths with explicit terminal context.
-
-Balchemy execution still happens through scoped MCP credentials and platform risk checks. The CLI does not ship backend trading internals, private endpoints, or wallet key material.
-
-## Command Guide
-
-```bash
-balchemy                         # Setup wizard or resume cached agent
-balchemy init                    # Force a new setup wizard
-balchemy auth login              # Alias for interactive setup
-balchemy auth status             # Show local auth/context status
-balchemy auth logout --force     # Clear active local context
-
-balchemy start [config]          # Start the TUI cockpit
-balchemy tui [config]            # Alias for start
-
-balchemy agent list              # List saved agents
-balchemy agent current           # Show active saved agent
-balchemy context current         # Alias for agent current
-balchemy agent use <publicId>    # Switch active saved agent
-
-balchemy config validate [file]  # Validate config and env references
-balchemy config list             # Print config summary
-balchemy doctor                  # Environment and package diagnostics
-
-balchemy docker [outDir]         # Generate Dockerfile, compose, and env example
-balchemy docker --dry-run        # Preview generated files without writing
-
-balchemy --help                  # Usage
-balchemy --version               # Version
-```
-
-## Global Flags
-
-| Flag | Purpose |
-| --- | --- |
-| `--json` | Stable machine-readable output for non-interactive commands |
-| `--quiet`, `-q` | Suppress non-essential human output |
-| `--verbose` | Show extra context for diagnostics |
-| `--debug` | Include debug details in human errors |
-| `--ci` | Fail closed instead of opening prompts/TUI |
-| `--dry-run` | Preview actions without writing files |
-| `--yes`, `-y` | Approve safe non-interactive prompts where supported |
-| `--force` | Required for explicit destructive local actions |
-| `--no-color` | Disable ANSI color output |
-
-`NO_COLOR=1` and `TERM=dumb` are also respected.
-
-## Scriptable Output
-
-Use JSON mode for automation:
-
-```bash
-balchemy agent list --json
-balchemy agent current --json
-balchemy config validate --json --ci
-balchemy doctor --json
-balchemy docker --dry-run --json
-```
-
-JSON output uses a stable top-level envelope:
-
-```json
-{
-  "ok": true,
-  "command": "doctor",
-  "version": "0.2.5",
-  "data": {},
-  "warnings": [],
-  "error": null
-}
-```
-
-Secrets and token-looking values are redacted before output.
-
-## TUI Cockpit
-
-The TUI is for interactive agent operation, not CI scripts. It shows agent context, chat, tool activity, settings, and trade confirmation panels.
-
-| Shortcut | Action |
-| --- | --- |
-| `Ctrl+S` | Open settings |
-| `?` | Open keyboard help |
-| `Ctrl+L` | Clear visible chat activity |
-| `Ctrl+N` | Return to launcher |
-| `Ctrl+Q` | Quit |
-| `PgUp/PgDn` | Scroll activity history |
-| `Esc` | Go back or cancel a trade prompt |
-
-Live trade prompts require typing `TRADE`. Anything else cancels.
+`NO_COLOR=1` also disables colored output.
 
 ## Files Written
 
-The wizard writes local files in the current working directory:
+The CLI writes local runtime files in the current directory.
+
+```yaml
+# agent.config.yaml
+llm:
+  provider: anthropic
+  model: selected-in-wizard
+
+agent:
+  name: my-trading-agent
+  strategy: Focus on liquid markets. Keep position size below 5%.
+
+wallets:
+  solana:
+    chain: solana
+  evm:
+    chainId: 8453
+```
+
+Secrets belong in `.env`. Do not commit that file.
+
+## What You Can Do
+
+### Trade
+
+- Buy and sell on Solana and EVM chains.
+- Create limit orders.
+- Schedule DCA rules.
+- Use trailing stops.
+
+### Research
+
+- Query token price, liquidity, volume, and holder distribution.
+- Check risk signals before a trade.
+- Track wallets and market events.
+- Compare positions across chains.
+
+### Manage
+
+- View portfolio, balances, positions, and PnL.
+- Define behavior rules in natural language.
+- Subscribe to market events.
+- Rotate scoped MCP keys in Hub.
+
+## Risk Model
+
+Every trade path is expected to pass risk checks before execution:
+
+- RugCheck signals.
+- Honeypot simulation.
+- Contract and liquidity checks.
+- Behavior rule enforcement.
+- Scoped MCP permissions.
+
+The wallet remains the authority. Keep private keys and seed phrases out of
+source, logs, screenshots, and prompts.
+
+## MCP Tools
+
+The CLI connects agents to the curated agent-facing MCP surface.
+
+| Tool | Purpose |
+| --- | --- |
+| `trade_command` | Buy, sell, or swap through the approved execution path |
+| `ask_bot` | Natural language market query support |
+| `agent_research` | Token and market research |
+| `agent_portfolio` | Portfolio, positions, and PnL |
+| `configure_behavior_rules` | Trading constraints in natural language |
+| `get_behavior_rules` | Current active rules |
+| `create_subscription` | Market event subscription |
+| `setup_agent` | Onboarding and runtime setup |
+
+Granular internal tools stay hidden unless the platform enables them for a bot.
+
+## LLM Providers
+
+| Provider | Environment variable |
+| --- | --- |
+| Anthropic | `ANTHROPIC_API_KEY` |
+| OpenAI | `OPENAI_API_KEY` |
+| Google Gemini | `GEMINI_API_KEY` |
+| Google Vertex AI | `GOOGLE_APPLICATION_CREDENTIALS` |
+| xAI Grok | `GROK_API_KEY` |
+| OpenRouter | `OPENROUTER_API_KEY` |
+
+Pick the model in the wizard or edit `agent.config.yaml`.
+
+## Runtime Mode
+
+The SDK includes an `AgentLoop` for long-running agents.
+
+```ts
+import { AgentLoop, BalchemyAgentSdk } from "@balchemyai/agent-sdk";
+
+const sdk = new BalchemyAgentSdk({
+  apiBaseUrl: "https://api.balchemy.ai/api",
+});
+
+const loop = new AgentLoop(sdk, {
+  apiKey: "your-mcp-api-key",
+});
+
+await loop.start();
+```
+
+Event flow:
 
 ```text
-agent.config.yaml
-.env
-.gitignore
+Market event -> SSE -> external LLM evaluates -> MCP tool call -> execution -> confirmation
 ```
 
-Before writing, the wizard previews whether each file will be created, appended, skipped, or overwritten. `.env` contains local secrets and should never be committed.
+## Hub
 
-## Docker Generation
+Agents registered through the CLI appear in [Balchemy Hub](https://balchemy.ai/hub).
 
-```bash
-balchemy docker ./deploy --dry-run
-balchemy docker ./deploy --force
-```
+- Monitor portfolio, trade history, and event logs.
+- Create, rotate, and revoke MCP keys.
+- Keep `read` and `trade` scopes separate.
+- Link Solana and EVM wallets.
 
-The generator can create:
+## Security
 
-```text
-Dockerfile
-docker-compose.yml
-.env.example
-```
-
-It blocks overwrites unless you explicitly review and approve them.
-
-## Safety Notes
-
-- External LLMs never receive raw wallet or private-key access through this CLI.
+- Credentials are encrypted at rest.
 - MCP keys are scoped and revocable.
-- Behavior rules remain part of the execution contract.
-- Pre-trade checks and server-side policy are the authority for execution.
-- Never paste private keys, seed phrases, production credentials, or DSNs into prompts or logs.
+- Behavior rules constrain execution.
+- Pre-trade checks run before approved execution.
+- Seed phrases should never be stored in source or logs.
 
-## Development
+## TUI Shortcuts
 
-```bash
-pnpm --dir packages/sdk run typecheck
-pnpm --dir packages/sdk run build
-pnpm --dir packages/cli run typecheck
-pnpm --dir packages/cli run build
-pnpm --dir packages/cli pack --dry-run
-```
+| Shortcut | Action |
+| --- | --- |
+| `^S` | Open settings |
+| `^L` | Clear chat history |
+| `^N` | New agent |
+| `^Q` | Quit |
+| `PgUp/PgDn` | Scroll message history |
+| `Esc` | Go back |
 
-Release packages together when public behavior spans both SDK and CLI. Replace workspace dependencies with npm semver before publishing.
+## Requirements
+
+- Node.js 18+
+- One supported LLM provider key
 
 ## Links
 
-- Platform: [balchemy.ai](https://balchemy.ai)
-- Documentation: [balchemy.ai/hub/docs](https://balchemy.ai/hub/docs)
-- GitHub: [github.com/balchemy/balchemy-agent](https://github.com/balchemy/balchemy-agent)
-- npm: [balchemy](https://www.npmjs.com/package/balchemy)
-- SDK: [@balchemyai/agent-sdk](https://www.npmjs.com/package/@balchemyai/agent-sdk)
+- [Platform](https://balchemy.ai)
+- [Documentation](https://balchemy.ai/hub/docs)
+- [Agent Explorer](https://balchemy.ai/explorer)
+- [GitHub](https://github.com/balchemy/balchemy-agent)
+- [npm: balchemy](https://www.npmjs.com/package/balchemy)
+- [npm: @balchemyai/agent-sdk](https://www.npmjs.com/package/@balchemyai/agent-sdk)
+- [X: @balchemyai](https://x.com/balchemyai)
+- [Contact](mailto:burak@balchemy.ai)
 
 ## License
 
