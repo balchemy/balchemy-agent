@@ -118,6 +118,14 @@ export type AgentResearchArgs = {
   maxPosts?: number;
 };
 
+export type AgentMarketDiscoveryArgs = {
+  query?: string;
+  chain?: "solana" | "base" | "ethereum";
+  signals?: Array<"launches" | "trending" | "social" | "liquidity">;
+  timeWindowMinutes?: number;
+  limit?: number;
+};
+
 export type AgentConfigArgs = {
   operation: "get" | "update_trade_defaults" | "update_risk_policy";
   defaults?: Record<string, unknown>;
@@ -435,6 +443,11 @@ export class BalchemyMcpClient {
   /** High-level agent execution endpoint. Returns structured envelope with intent/result/metadata. Preferred over `tradeCommand()` for programmatic use. */
   async agentExecute(args: AgentExecuteArgs): Promise<McpCallToolResponse> {
     return this.callTool("agent_execute", args as unknown as Record<string, unknown>);
+  }
+
+  /** Broad read-only discovery for launches, trends, social buzz, and liquidity signals. */
+  async agentMarketDiscovery(args: AgentMarketDiscoveryArgs = {}): Promise<McpCallToolResponse> {
+    return this.callTool("agent_market_discovery", args as unknown as Record<string, unknown>);
   }
 
   /** High-level agent research endpoint. */

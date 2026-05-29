@@ -4,7 +4,16 @@ import type { BalchemyMcpClient } from "@balchemyai/agent-sdk";
 import { ChatAgent } from "../ChatAgent.js";
 
 type ChatAgentHarness = {
-  history: Array<{ role: string; content: string }>;
+  history: Array<{
+    role: string;
+    content: string;
+    tool_calls?: Array<{
+      id: string;
+      type: "function";
+      function: { name: string; arguments: string };
+    }>;
+  }>;
+  tools: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }>;
   callLlm: () => Promise<{
     text: string;
     toolCalls?: Array<{
@@ -103,12 +112,133 @@ test("ChatAgent sends structured trade details to confirmation callback", async 
 
   assert.equal(reply, "done");
   assert.deepEqual(seen, [{
-    preview: "BUY 0.1 SOL → So111111111111111",
+    preview: "BUY 0.1 SOL → So1111111111111111",
     token: "So11111111111111111111111111111111111111112",
     amount: "0.1",
     chain: "solana",
   }]);
   assert.equal(mcpCalls.length, 1);
+});
+
+test("ChatAgent follows backend suggestedTool redirects for broad discovery", async () => {
+  const mcpCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const agent = new ChatAgent(
+    {
+      llmProvider: "openai",
+      llmApiKey: "test-key",
+      llmModel: "gpt-5.4-mini",
+    },
+    {
+      listTools: async () => ({ tools: [] }),
+      callTool: async (name: string, args: Record<string, unknown>) => {
+        mcpCalls.push({ name, args });
+        if (name === "agent_research") {
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                reply: "Use agent_market_discovery for broad scans.",
+                structured: {
+                  query: "solana yeni launch tara",
+                  suggestedTool: "agent_market_discovery",
+                },
+              }),
+            }],
+          };
+        }
+        return { content: [{ type: "text", text: "discovery-result" }] };
+      },
+    } as unknown as BalchemyMcpClient,
+    fetch,
+  ) as unknown as ChatAgentHarness;
+
+  agent.history = [{ role: "system", content: "test" }];
+  agent.tools = [{
+    name: "agent_market_discovery",
+    description: "Broad market discovery",
+    inputSchema: { type: "object", properties: {} },
+  }];
+  let rounds = 0;
+  agent.callLlm = async () => {
+    rounds += 1;
+    if (rounds === 1) {
+      return {
+        text: "",
+        toolCalls: [{
+          id: "call-1",
+          type: "function",
+          function: {
+            name: "agent_research",
+            arguments: JSON.stringify({ query: "solana yeni launch tara", chain: "solana" }),
+          },
+        }],
+      };
+    }
+    return { text: "launches checked" };
+  };
+
+  const toolEvents: Array<{ name: string; result: string }> = [];
+  const reply = await agent.chat("solana yeni launch tara", (name, result) => {
+    toolEvents.push({ name, result });
+  });
+
+  assert.equal(reply, "launches checked");
+  assert.deepEqual(mcpCalls, [
+    { name: "agent_research", args: { query: "solana yeni launch tara", chain: "solana" } },
+    { name: "agent_market_discovery", args: { query: "solana yeni launch tara", chain: "solana" } },
+  ]);
+  assert.deepEqual(toolEvents.map((event) => event.name), ["agent_research", "agent_market_discovery"]);
+  assert.equal(agent.history[2]?.tool_calls?.[0]?.function.name, "agent_research");
+  assert.equal(agent.history[4]?.tool_calls?.[0]?.function.name, "agent_market_discovery");
+});
+
+test("ChatAgent leaves explicit ticker research for LLM tool selection", async () => {
+  const mcpCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const agent = new ChatAgent(
+    {
+      llmProvider: "openai",
+      llmApiKey: "test-key",
+      llmModel: "gpt-5.4-mini",
+    },
+    {
+      listTools: async () => ({ tools: [] }),
+      callTool: async (name: string, args: Record<string, unknown>) => {
+        mcpCalls.push({ name, args });
+        return { content: [{ type: "text", text: "research-result" }] };
+      },
+    } as unknown as BalchemyMcpClient,
+    fetch,
+  ) as unknown as ChatAgentHarness;
+
+  agent.history = [{ role: "system", content: "test" }];
+  agent.tools = [{
+    name: "agent_market_discovery",
+    description: "Broad market discovery",
+    inputSchema: { type: "object", properties: {} },
+  }];
+  let rounds = 0;
+  agent.callLlm = async () => {
+    rounds += 1;
+    if (rounds === 1) {
+      return {
+        text: "",
+        toolCalls: [{
+          id: "call-1",
+          type: "function",
+          function: {
+            name: "agent_research",
+            arguments: JSON.stringify({ query: "BONK", chain: "solana" }),
+          },
+        }],
+      };
+    }
+    return { text: "researched" };
+  };
+
+  const reply = await agent.chat("BONK araştır");
+
+  assert.equal(reply, "researched");
+  assert.deepEqual(mcpCalls, [{ name: "agent_research", args: { query: "BONK", chain: "solana" } }]);
 });
 
 test("ChatAgent text-only completions share the chat queue", async () => {

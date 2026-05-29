@@ -23,15 +23,17 @@ interface ToolDef {
   inputSchema: Record<string, unknown>;
 }
 
+interface ToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
 interface ConversationMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
   tool_call_id?: string;
-  tool_calls?: Array<{
-    id: string;
-    type: "function";
-    function: { name: string; arguments: string };
-  }>;
+  tool_calls?: ToolCall[];
 }
 
 interface ChatAgentConfig {
@@ -57,6 +59,56 @@ function isDefaultOpenAiBaseUrl(baseUrl: string): boolean {
 
 function isOpenAiPlatformApiKey(apiKey: string): boolean {
   return apiKey.startsWith("sk-");
+}
+
+type SuggestedToolEnvelope = {
+  structured?: {
+    query?: unknown;
+    suggestedTool?: unknown;
+  };
+};
+
+function normalizeDiscoveryChain(value: unknown): "solana" | "base" | "ethereum" | undefined {
+  return value === "solana" || value === "base" || value === "ethereum"
+    ? value
+    : undefined;
+}
+
+function extractSuggestedToolFollowUp(
+  resultText: string,
+  sourceArgs: Record<string, unknown>,
+): ToolCall | undefined {
+  let parsed: SuggestedToolEnvelope;
+  try {
+    parsed = JSON.parse(resultText) as SuggestedToolEnvelope;
+  } catch {
+    return undefined;
+  }
+
+  if (parsed.structured?.suggestedTool !== "agent_market_discovery") {
+    return undefined;
+  }
+
+  const query = typeof parsed.structured.query === "string"
+    ? parsed.structured.query
+    : undefined;
+  const chain = normalizeDiscoveryChain(sourceArgs.chain);
+  const args: Record<string, unknown> = {};
+  if (query) {
+    args.query = query;
+  }
+  if (chain) {
+    args.chain = chain;
+  }
+
+  return {
+    id: `suggested-${randomUUID()}`,
+    type: "function",
+    function: {
+      name: "agent_market_discovery",
+      arguments: JSON.stringify(args),
+    },
+  };
 }
 
 // ── ChatAgent ─────────────────────────────────────────────────────────────────
@@ -148,82 +200,109 @@ export class ChatAgent {
   ): Promise<string> {
     this.history.push({ role: "user", content: userMessage });
 
-    // Loop: call LLM → if tool calls, execute them → feed back → repeat
     const MAX_ROUNDS = 10;
     for (let round = 0; round < MAX_ROUNDS; round++) {
       const response = await this.withRetry(() => this.callLlm());
 
       if (!response.toolCalls || response.toolCalls.length === 0) {
-        // Pure text response — done
         this.history.push({ role: "assistant", content: response.text });
         return response.text;
       }
 
-      // LLM wants to call tools
       this.history.push({
         role: "assistant",
         content: response.text || "",
         tool_calls: response.toolCalls,
       });
 
-      // Execute each tool call
       for (const tc of response.toolCalls) {
-        let args: Record<string, unknown>;
-        try {
-          args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
-        } catch {
-          args = {};
-        }
-
-        let resultText: string;
-
-        // Intercept trade_command for confirmation
-        if (tc.function.name === "trade_command" && confirmTrade) {
-          const intent = String(args.intent ?? args.message ?? "trade");
-          const action = String(args.action ?? args.side ?? args.intent ?? "trade");
-          const token = String(args.token ?? args.tokenMint ?? args.tokenAddress ?? args.mint ?? "unknown");
-          const amount = String(args.amount ?? args.size ?? args.solAmount ?? args.usdAmount ?? "?");
-          const chain = String(args.chain ?? args.network ?? "unknown");
-          const unit = chain.toLowerCase().includes("base") ? "USD/USDC" : "SOL";
-          const preview = `${action.toUpperCase()} ${amount} ${unit} → ${token.slice(0, 18)}`;
-
-          const confirmed = await confirmTrade({
-            preview,
-            intent,
-            action,
-            token,
-            amount,
-            chain,
-            rawArgs: args,
-          });
-          if (!confirmed) {
-            resultText = "Trade cancelled by user.";
-            onToolCall?.(tc.function.name, resultText);
-            this.history.push({ role: "tool", content: resultText, tool_call_id: tc.id });
-            continue;
-          }
-        }
-
-        try {
-          const toolResp = await this.mcp.callTool(tc.function.name, args);
-          const content = toolResp.content ?? [];
-          const textPart = content.find((c: { type: string; text?: string }) => c.type === "text");
-          resultText = textPart?.text ?? JSON.stringify(toolResp);
-        } catch (err: unknown) {
-          resultText = `Error: ${err instanceof Error ? err.message : String(err)}`;
-        }
-
-        onToolCall?.(tc.function.name, resultText);
-
-        this.history.push({
-          role: "tool",
-          content: resultText,
-          tool_call_id: tc.id,
-        });
+        await this.executeToolCall(tc, onToolCall, confirmTrade);
       }
     }
 
     return "I hit the tool-call limit. Please try a simpler request.";
+  }
+
+  private async executeToolCall(
+    tc: ToolCall,
+    onToolCall: ((name: string, result: string) => void) | undefined,
+    confirmTrade: ((details: TradeConfirmationDetails) => Promise<boolean>) | undefined,
+  ): Promise<void> {
+    let args: Record<string, unknown>;
+    try {
+      args = JSON.parse(tc.function.arguments) as Record<string, unknown>;
+    } catch {
+      args = {};
+    }
+
+    let resultText: string;
+
+    if (tc.function.name === "trade_command" && confirmTrade) {
+      const intent = String(args.intent ?? args.message ?? "trade");
+      const action = String(args.action ?? args.side ?? args.intent ?? "trade");
+      const token = String(args.token ?? args.tokenMint ?? args.tokenAddress ?? args.mint ?? "unknown");
+      const amount = String(args.amount ?? args.size ?? args.solAmount ?? args.usdAmount ?? "?");
+      const chain = String(args.chain ?? args.network ?? "unknown");
+      const unit = chain.toLowerCase().includes("base") ? "USD/USDC" : "SOL";
+      const preview = `${action.toUpperCase()} ${amount} ${unit} → ${token.slice(0, 18)}`;
+
+      const confirmed = await confirmTrade({
+        preview,
+        intent,
+        action,
+        token,
+        amount,
+        chain,
+        rawArgs: args,
+      });
+      if (!confirmed) {
+        resultText = "Trade cancelled by user.";
+        onToolCall?.(tc.function.name, resultText);
+        this.history.push({ role: "tool", content: resultText, tool_call_id: tc.id });
+        return;
+      }
+    }
+
+    try {
+      const toolResp = await this.mcp.callTool(tc.function.name, args);
+      const content = toolResp.content ?? [];
+      const textPart = content.find((c: { type: string; text?: string }) => c.type === "text");
+      resultText = textPart?.text ?? JSON.stringify(toolResp);
+    } catch (err: unknown) {
+      resultText = `Error: ${err instanceof Error ? err.message : String(err)}`;
+    }
+
+    onToolCall?.(tc.function.name, resultText);
+
+    this.history.push({
+      role: "tool",
+      content: resultText,
+      tool_call_id: tc.id,
+    });
+
+    const suggestedToolCall = this.resolveSuggestedToolCall(resultText, tc.function.name, args);
+    if (suggestedToolCall) {
+      this.history.push({
+        role: "assistant",
+        content: "",
+        tool_calls: [suggestedToolCall],
+      });
+      await this.executeToolCall(suggestedToolCall, onToolCall, confirmTrade);
+    }
+  }
+
+  private resolveSuggestedToolCall(
+    resultText: string,
+    sourceToolName: string,
+    sourceArgs: Record<string, unknown>,
+  ): ToolCall | undefined {
+    if (sourceToolName !== "agent_research") {
+      return undefined;
+    }
+    if (!this.tools.some((tool) => tool.name === "agent_market_discovery")) {
+      return undefined;
+    }
+    return extractSuggestedToolFollowUp(resultText, sourceArgs);
   }
 
   // ── Retry logic ────────────────────────────────────────────────────────────
@@ -578,6 +657,8 @@ export class ChatAgent {
 const SYSTEM_PROMPT = `You are a Balchemy autonomous trading agent. You help the user set up and run their crypto trading bot on Solana and Base chains.
 
 You have access to MCP tools via tool calling. Always call tools when you need to take action — never just describe what you would do.
+
+For broad market discovery requests like new launches, trending tokens, social buzz, liquidity scans, opportunities, candidates, or Turkish prompts such as "tara" / "yeni launch", use agent_market_discovery. Use agent_research only after the user names a specific token, ticker, mint, or contract.
 
 ## SETUP FLOW
 

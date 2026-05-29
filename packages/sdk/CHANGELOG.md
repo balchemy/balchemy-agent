@@ -7,6 +7,18 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.2.7] — 2026-05-29
+
+### Added
+
+- Add typed `agentMarketDiscovery()` SDK helper for the read-only broad market discovery MCP tool.
+- Teach the CLI chat loop to follow backend `structured.suggestedTool` redirects from direct research to broad market discovery when the suggested tool is exposed.
+
+### Notes
+
+- Market discovery policy remains server-side in backend tools; the CLI only follows the backend MCP response contract.
+- Publish `@balchemyai/agent-sdk@0.2.7` before `balchemy@0.2.7` so the CLI dependency resolves from npm semver.
+
 ## [0.2.6] — 2026-05-29
 
 ### Changed

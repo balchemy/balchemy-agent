@@ -127,6 +127,29 @@ describe("BalchemyMcpClient", () => {
       expect(body.params.arguments).toEqual({ instruction: "test" });
     });
 
+    it("agentMarketDiscovery calls agent_market_discovery tool", async () => {
+      const fetchFn = makeFetchSuccess({ content: [{ type: "text", text: "ok" }] });
+      const client = buildClient(fetchFn);
+      await client.agentMarketDiscovery({
+        query: "solana new launches",
+        chain: "solana",
+        signals: ["launches", "social"],
+        limit: 5,
+      });
+
+      const [, init] = fetchFn.mock.calls[0] as [string, RequestInit];
+      const body = JSON.parse(init.body as string) as {
+        params: { name: string; arguments: Record<string, unknown> };
+      };
+      expect(body.params.name).toBe("agent_market_discovery");
+      expect(body.params.arguments).toEqual({
+        query: "solana new launches",
+        chain: "solana",
+        signals: ["launches", "social"],
+        limit: 5,
+      });
+    });
+
     it("requestSeed throws deterministic disabled error", async () => {
       const fetchFn = makeFetchSuccess({ content: [] });
       const client = buildClient(fetchFn);
