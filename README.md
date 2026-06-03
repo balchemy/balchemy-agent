@@ -40,6 +40,11 @@ npx balchemy init                 # Start the setup wizard
 npx balchemy start                # Run the TUI from agent.config.yaml
 npx balchemy agent list --json    # Scriptable saved-agent list
 npx balchemy agent current        # Show active local context
+npx balchemy control status       # Show backend autonomous runtime mode
+npx balchemy control pause        # Pause backend autonomy
+npx balchemy control resume       # Resume backend autonomy
+npx balchemy control arm          # Arm live execution after policy gates
+npx balchemy control disarm       # Disarm live execution
 npx balchemy config validate      # Validate local config and env references
 npx balchemy docker --dry-run     # Preview Docker files before writing
 npx balchemy doctor --json        # Machine-readable environment checks
@@ -89,9 +94,10 @@ The runtime `tools/list` response is the source of truth for the current agent's
 MCP surface. Availability depends on key scope and backend policy.
 
 Typical capabilities include chat/research, runtime status, walletless setup,
-behavior-rule management, subscriptions, and approved trade commands. Raw direct
-research, broad discovery, and portfolio snapshots stay behind the platform
-boundary unless they are explicitly returned by `tools/list`.
+safe context snapshots, safe market briefs, candidate and risk reports,
+behavior-rule management, subscriptions, runtime control, and approved trade
+commands. Raw direct research, broad discovery, and portfolio snapshots stay
+behind the platform boundary unless they are explicitly returned by `tools/list`.
 
 The public SDK and CLI do not contain backend trading internals, private
 endpoints, privileged workflows, or secrets.

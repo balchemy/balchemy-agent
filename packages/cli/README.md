@@ -58,6 +58,11 @@ npx balchemy              # Setup wizard or resume cached agent
 npx balchemy init         # New setup wizard
 npx balchemy start        # Start from agent.config.yaml
 npx balchemy list         # List saved agents
+npx balchemy control status # Show backend runtime mode
+npx balchemy control pause  # Pause backend autonomy
+npx balchemy control resume # Resume unarmed backend autonomy
+npx balchemy control arm    # Arm live autonomous execution
+npx balchemy control disarm # Return live runtime to unarmed mode
 npx balchemy docker       # Generate Docker files
 npx balchemy --help       # Usage
 npx balchemy --version    # Version
@@ -129,9 +134,12 @@ source, logs, screenshots, and prompts.
 The CLI uses the curated agent-facing MCP surface returned by `tools/list`.
 Availability depends on MCP key scope and backend policy.
 
-Typical capabilities include chat/research through `ask_bot`, runtime status
-through `agent_status`, walletless setup through `setup_agent`, behavior-rule
-management, market-event subscriptions, and approved trade commands.
+Typical capabilities include chat through `ask_bot`, runtime status through
+`agent_status`, safe context through `agent_context_snapshot`, safe discovery
+through `agent_market_brief`, safe asset reports through
+`agent_candidate_report` / `agent_risk_report`, walletless setup through
+`setup_agent`, behavior-rule management, market-event subscriptions, runtime
+control through `agent_control`, and approved trade commands.
 
 Raw/internal direct research, broad discovery, and portfolio snapshot tools stay
 hidden unless they are returned by `tools/list` for that bot.

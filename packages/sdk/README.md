@@ -120,9 +120,17 @@ scope, replay/rate protection, and the approved product flow.
 | `trade` | Read tools plus trade execution tools |
 
 The default MCP endpoint exposes a curated agent-facing surface for chat,
-execution, setup, behavior rules, runtime status, and subscriptions. Raw
-research, discovery, and portfolio snapshot tools stay hidden unless they are
-returned by `tools/list` for that bot.
+execution, setup, behavior rules, runtime status, safe reports, runtime control,
+and subscriptions. Raw research, discovery, and portfolio snapshot tools stay
+hidden unless they are returned by `tools/list` for that bot.
+
+Use `agent_status` for read-scope runtime state. Safe read wrappers are
+`agent_context_snapshot`, `agent_market_brief`, `agent_candidate_report`, and
+`agent_risk_report`. Runtime mutation uses manage-scope `agent_control`.
+
+`AgentLoop` fails closed before `trade_command`: local `shadowMode=false` is not
+enough. The backend runtime must report `autonomous_runtime.mode=live_armed`,
+`armed=true`, and `paused=false` from a fresh `agent_status` response.
 
 ## Errors
 

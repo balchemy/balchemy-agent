@@ -9,6 +9,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import type { AgentLoopConfig } from "@balchemyai/agent-sdk";
 import {
@@ -31,6 +32,7 @@ import {
   createReporter,
   endpointHost,
   jsonEnvelope,
+  redactJsonValue,
   type JsonValue,
 } from "./output.js";
 import {
@@ -205,12 +207,18 @@ function printHelp(): void {
     balchemy init                    Run setup wizard
     balchemy start [config]          Start the live Ink cockpit
     balchemy list                    List saved agents
+    balchemy control status          Show backend autonomous runtime mode
+    balchemy control pause           Pause backend autonomous runtime
+    balchemy control resume          Resume in unarmed mode
+    balchemy control arm             Arm live autonomous execution
+    balchemy control disarm          Return live runtime to unarmed mode
     balchemy docker [outDir]         Generate Docker files
 
   ${C.W}COMMANDS${C.R}
     agent list                       List saved agents (alias: list)
     agent current                    Show active agent context
     agent use <publicId>             Switch active saved agent
+    agent control <action>           Alias for control <action>
     auth status                      Show local auth/context status
     auth login                       Run interactive setup wizard (alias: init)
     auth logout                      Clear active context; credential removal stays explicit
@@ -268,9 +276,17 @@ const KNOWN_COMMANDS = [
   "start",
   "docker",
   "list",
+  "control",
+  "control status",
+  "control pause",
+  "control resume",
+  "control arm",
+  "control disarm",
+  "control set-mode",
   "agent list",
   "agent current",
   "agent use",
+  "agent control",
   "auth status",
   "config validate",
   "config list",
@@ -410,6 +426,199 @@ function printAgentCurrent(): void {
     { label: "Mode", value: active.shadowMode ? "Shadow" : "Live-approved" },
     { label: "Saved", value: active.createdAt },
     { label: "Secrets", value: "stored encrypted locally, redacted in CLI output" },
+  ]);
+}
+
+type ControlAction = "status" | "pause" | "resume" | "arm" | "disarm" | "set_mode";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeControlAction(commandName: string, commandArgs: string[]): { action: ControlAction; mode?: string } {
+  const commandPart = commandName.startsWith("control ") ? commandName.slice("control ".length) : "";
+  const raw = (commandPart || commandArgs[0] || "status").replace("-", "_").toLowerCase();
+  if (raw === "set_mode") {
+    const mode = commandArgs[0] && commandPart ? commandArgs[0] : commandArgs[1];
+    if (!mode) {
+      throw new TerminalError({
+        code: "UNKNOWN_COMMAND",
+        title: "Missing runtime mode",
+        cause: "balchemy control set-mode requires a target mode.",
+        fix: "Use one of: shadow, live_unarmed, live_armed, paused.",
+        commandSuggestion: "balchemy control set-mode shadow",
+        exitCode: 2,
+      });
+    }
+    return { action: "set_mode", mode };
+  }
+  if (raw === "status" || raw === "pause" || raw === "resume" || raw === "arm" || raw === "disarm") {
+    return { action: raw };
+  }
+  throw new TerminalError({
+    code: "UNKNOWN_COMMAND",
+    title: "Unknown control action",
+    cause: `Unsupported control action: ${raw || "(empty)"}.`,
+    fix: "Use status, pause, resume, arm, disarm, or set-mode.",
+    commandSuggestion: "balchemy control status",
+    exitCode: 2,
+  });
+}
+
+async function mcpToolCall(
+  endpoint: string,
+  apiKey: string,
+  name: string,
+  toolArgs: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const nonce = `cli-${Date.now()}-${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      Authorization: `Bearer ${apiKey}`,
+      "x-request-nonce": nonce,
+      "x-request-timestamp": timestamp,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: randomUUID(),
+      method: "tools/call",
+      params: {
+        name,
+        arguments: toolArgs,
+      },
+    }),
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  const raw = await response.text();
+  const dataLine = raw.split("\n").find((line) => line.startsWith("data: "));
+  const jsonText = dataLine ? dataLine.slice(6) : raw;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch {
+    throw new TerminalError({
+      code: "RUNTIME_ERROR",
+      title: "Invalid MCP response",
+      cause: `MCP returned a non-JSON response with HTTP ${response.status}.`,
+      fix: "Check the endpoint and API key, then retry with --debug if needed.",
+      commandSuggestion: "balchemy auth status",
+      exitCode: 1,
+    });
+  }
+
+  if (!isRecord(parsed)) {
+    throw new TerminalError({
+      code: "RUNTIME_ERROR",
+      title: "Invalid MCP response",
+      cause: "MCP returned an unexpected response envelope.",
+      fix: "Check the endpoint and API key, then retry.",
+      commandSuggestion: "balchemy auth status",
+      exitCode: 1,
+    });
+  }
+
+  if (isRecord(parsed.error)) {
+    const message = typeof parsed.error.message === "string" ? parsed.error.message : "MCP tool call failed.";
+    throw new TerminalError({
+      code: "RUNTIME_ERROR",
+      title: "MCP tool call failed",
+      cause: message,
+      fix: "Confirm your active MCP key has manage scope and a valid step-up token when required.",
+      commandSuggestion: "balchemy auth status",
+      exitCode: 1,
+    });
+  }
+
+  const result = isRecord(parsed.result) ? parsed.result : {};
+  const content = Array.isArray(result.content) ? result.content : [];
+  const firstText = content
+    .map((item) => (isRecord(item) && typeof item.text === "string" ? item.text : null))
+    .find((text): text is string => Boolean(text));
+  if (!firstText) {
+    return result;
+  }
+
+  try {
+    const decoded = JSON.parse(firstText);
+    return isRecord(decoded) ? decoded : { reply: firstText };
+  } catch {
+    return { reply: firstText };
+  }
+}
+
+function getNestedRecord(record: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const value = record[key];
+  return isRecord(value) ? value : null;
+}
+
+function getRuntimeStateFromControlResult(result: Record<string, unknown>): Record<string, unknown> | null {
+  const structured = getNestedRecord(result, "structured");
+  const stateFromStructured = structured ? getNestedRecord(structured, "state") : null;
+  const runtimeFromStructured = structured
+    ? getNestedRecord(structured, "autonomous_runtime") ?? getNestedRecord(structured, "autonomousRuntime")
+    : null;
+  return stateFromStructured
+    ?? runtimeFromStructured
+    ?? getNestedRecord(result, "state")
+    ?? getNestedRecord(result, "autonomous_runtime")
+    ?? getNestedRecord(result, "autonomousRuntime");
+}
+
+async function controlCommand(commandName: string): Promise<void> {
+  const active = loadAgent();
+  if (!active) {
+    throw new TerminalError({
+      code: "UNKNOWN_COMMAND",
+      title: "No active agent",
+      cause: "Runtime control requires an active saved agent context.",
+      fix: "Run balchemy list, then balchemy agent use <publicId>, or run balchemy init.",
+      commandSuggestion: "balchemy list",
+      exitCode: 2,
+    });
+  }
+
+  const normalized = normalizeControlAction(commandName, args);
+  const toolName = normalized.action === "status" ? "agent_status" : "agent_control";
+  const toolArgs: Record<string, unknown> = normalized.action === "status"
+    ? {}
+    : {
+        action: normalized.action,
+        ...(normalized.mode ? { mode: normalized.mode } : {}),
+        reason: "cli_control",
+      };
+  const result = await mcpToolCall(active.mcpEndpoint, active.apiKey, toolName, toolArgs);
+  const state = getRuntimeStateFromControlResult(result);
+  const data: JsonValue = {
+    agent: {
+      publicId: active.publicId,
+      endpointHost: endpointHost(active.mcpEndpoint),
+      apiKey: "[redacted]",
+    },
+    action: normalized.action,
+    result: redactJsonValue(result),
+    state: state ? redactJsonValue(state) : null,
+  };
+
+  if (parsed.flags.json) {
+    reporter.json(jsonEnvelope({ ok: true, command: commandName, version: CLI_VERSION, data }));
+    return;
+  }
+
+  const mode = typeof state?.mode === "string" ? state.mode : "unknown";
+  const armed = typeof state?.armed === "boolean" ? String(state.armed) : "unknown";
+  const paused = typeof state?.paused === "boolean" ? String(state.paused) : "unknown";
+  printSummaryBlock("Autonomous runtime", [
+    { label: "Agent", value: active.publicId },
+    { label: "Host", value: endpointHost(active.mcpEndpoint) },
+    { label: "Action", value: normalized.action },
+    { label: "Mode", value: mode },
+    { label: "Armed", value: armed },
+    { label: "Paused", value: paused },
   ]);
 }
 
@@ -913,6 +1122,17 @@ async function main(): Promise<void> {
       return;
     case "agent current":
       printAgentCurrent();
+      return;
+    case "control":
+    case "control status":
+    case "control pause":
+    case "control resume":
+    case "control arm":
+    case "control disarm":
+    case "control set-mode":
+    case "control set_mode":
+    case "agent control":
+      await controlCommand(cmd);
       return;
     case "auth login":
       if (parsed.flags.dryRun) {

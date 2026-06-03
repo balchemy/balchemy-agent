@@ -132,15 +132,15 @@ test("ChatAgent follows backend suggestedTool redirects for broad discovery", as
       listTools: async () => ({ tools: [] }),
       callTool: async (name: string, args: Record<string, unknown>) => {
         mcpCalls.push({ name, args });
-        if (name === "agent_research") {
+        if (name === "agent_candidate_report") {
           return {
             content: [{
               type: "text",
               text: JSON.stringify({
-                reply: "Use agent_market_discovery for broad scans.",
+                reply: "Use agent_market_brief for broad scans.",
                 structured: {
                   query: "solana yeni launch tara",
-                  suggestedTool: "agent_market_discovery",
+                  suggestedTool: "agent_market_brief",
                 },
               }),
             }],
@@ -154,7 +154,7 @@ test("ChatAgent follows backend suggestedTool redirects for broad discovery", as
 
   agent.history = [{ role: "system", content: "test" }];
   agent.tools = [{
-    name: "agent_market_discovery",
+    name: "agent_market_brief",
     description: "Broad market discovery",
     inputSchema: { type: "object", properties: {} },
   }];
@@ -168,7 +168,7 @@ test("ChatAgent follows backend suggestedTool redirects for broad discovery", as
           id: "call-1",
           type: "function",
           function: {
-            name: "agent_research",
+            name: "agent_candidate_report",
             arguments: JSON.stringify({ query: "solana yeni launch tara", chain: "solana" }),
           },
         }],
@@ -184,12 +184,12 @@ test("ChatAgent follows backend suggestedTool redirects for broad discovery", as
 
   assert.equal(reply, "launches checked");
   assert.deepEqual(mcpCalls, [
-    { name: "agent_research", args: { query: "solana yeni launch tara", chain: "solana" } },
-    { name: "agent_market_discovery", args: { query: "solana yeni launch tara", chain: "solana" } },
+    { name: "agent_candidate_report", args: { query: "solana yeni launch tara", chain: "solana" } },
+    { name: "agent_market_brief", args: { query: "solana yeni launch tara", chain: "solana" } },
   ]);
-  assert.deepEqual(toolEvents.map((event) => event.name), ["agent_research", "agent_market_discovery"]);
-  assert.equal(agent.history[2]?.tool_calls?.[0]?.function.name, "agent_research");
-  assert.equal(agent.history[4]?.tool_calls?.[0]?.function.name, "agent_market_discovery");
+  assert.deepEqual(toolEvents.map((event) => event.name), ["agent_candidate_report", "agent_market_brief"]);
+  assert.equal(agent.history[2]?.tool_calls?.[0]?.function.name, "agent_candidate_report");
+  assert.equal(agent.history[4]?.tool_calls?.[0]?.function.name, "agent_market_brief");
 });
 
 test("ChatAgent leaves explicit ticker research for LLM tool selection", async () => {
@@ -212,7 +212,7 @@ test("ChatAgent leaves explicit ticker research for LLM tool selection", async (
 
   agent.history = [{ role: "system", content: "test" }];
   agent.tools = [{
-    name: "agent_market_discovery",
+    name: "agent_market_brief",
     description: "Broad market discovery",
     inputSchema: { type: "object", properties: {} },
   }];
@@ -226,7 +226,7 @@ test("ChatAgent leaves explicit ticker research for LLM tool selection", async (
           id: "call-1",
           type: "function",
           function: {
-            name: "agent_research",
+            name: "agent_candidate_report",
             arguments: JSON.stringify({ query: "BONK", chain: "solana" }),
           },
         }],
@@ -238,7 +238,7 @@ test("ChatAgent leaves explicit ticker research for LLM tool selection", async (
   const reply = await agent.chat("BONK araştır");
 
   assert.equal(reply, "researched");
-  assert.deepEqual(mcpCalls, [{ name: "agent_research", args: { query: "BONK", chain: "solana" } }]);
+  assert.deepEqual(mcpCalls, [{ name: "agent_candidate_report", args: { query: "BONK", chain: "solana" } }]);
 });
 
 test("ChatAgent text-only completions share the chat queue", async () => {

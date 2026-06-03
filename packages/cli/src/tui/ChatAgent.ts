@@ -85,7 +85,7 @@ function extractSuggestedToolFollowUp(
     return undefined;
   }
 
-  if (parsed.structured?.suggestedTool !== "agent_market_discovery") {
+  if (parsed.structured?.suggestedTool !== "agent_market_brief") {
     return undefined;
   }
 
@@ -105,7 +105,7 @@ function extractSuggestedToolFollowUp(
     id: `suggested-${randomUUID()}`,
     type: "function",
     function: {
-      name: "agent_market_discovery",
+      name: "agent_market_brief",
       arguments: JSON.stringify(args),
     },
   };
@@ -296,10 +296,10 @@ export class ChatAgent {
     sourceToolName: string,
     sourceArgs: Record<string, unknown>,
   ): ToolCall | undefined {
-    if (sourceToolName !== "agent_research") {
+    if (sourceToolName !== "agent_candidate_report") {
       return undefined;
     }
-    if (!this.tools.some((tool) => tool.name === "agent_market_discovery")) {
+    if (!this.tools.some((tool) => tool.name === "agent_market_brief")) {
       return undefined;
     }
     return extractSuggestedToolFollowUp(resultText, sourceArgs);

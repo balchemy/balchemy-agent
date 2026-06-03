@@ -59,8 +59,16 @@ function splitCommandAndArgs(positional: string[]): { commandPath: string[]; arg
 
   if (!first) return { commandPath: [], args: [] };
 
-  if (first === "agent" && ["list", "current", "use"].includes(second ?? "")) {
+  if (first === "agent" && ["list", "current", "use", "control"].includes(second ?? "")) {
     return { commandPath: [first, second as string], args: positional.slice(2) };
+  }
+
+  if (first === "control") {
+    const controlActions = ["status", "pause", "resume", "arm", "disarm", "set-mode", "set_mode"];
+    if (controlActions.includes(second ?? "")) {
+      return { commandPath: [first, second as string], args: positional.slice(2) };
+    }
+    return { commandPath: [first], args: positional.slice(1) };
   }
 
   if (first === "auth" && ["status", "login", "logout"].includes(second ?? "")) {

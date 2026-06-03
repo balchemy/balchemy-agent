@@ -50,6 +50,29 @@ function buildRuntimeStatusSnapshot(parsed: Record<string, unknown>): AgentPortf
   };
 }
 
+function getAutonomousRuntimeState(snapshot: AgentPortfolioSnapshot): Record<string, unknown> | null {
+  const runtimeStatus = asRecord(snapshot.runtimeStatus);
+  return asRecord(runtimeStatus?.autonomous_runtime)
+    ?? asRecord(runtimeStatus?.autonomousRuntime)
+    ?? asRecord(snapshot.autonomous_runtime)
+    ?? asRecord(snapshot.autonomousRuntime);
+}
+
+function isRuntimeLiveArmed(snapshot: AgentPortfolioSnapshot): boolean {
+  const runtime = getAutonomousRuntimeState(snapshot);
+  if (!runtime) {
+    return false;
+  }
+  return runtime.mode === 'live_armed'
+    && runtime.armed === true
+    && runtime.paused !== true;
+}
+
+function isRuntimePaused(snapshot: AgentPortfolioSnapshot): boolean {
+  const runtime = getAutonomousRuntimeState(snapshot);
+  return runtime?.paused === true || runtime?.mode === 'paused';
+}
+
 export class AgentLoop {
   private readonly config: AgentLoopConfig;
   private readonly sseEndpoint: string;
@@ -269,11 +292,15 @@ export class AgentLoop {
 
   private async processEvent(event: AgentEvent): Promise<void> {
     try {
-      // Fetch portfolio and behavior rules (both cached)
-      const [portfolio, compressedRules] = await Promise.all([
-        this.fetchPortfolio(),
-        this.fetchBehaviorRules(),
-      ]);
+      const portfolio = await this.fetchPortfolio();
+      if (isRuntimePaused(portfolio)) {
+        this.config.onTradeResult?.({
+          action: 'hold',
+          response: 'Runtime paused: event ignored before LLM decision.',
+        });
+        return;
+      }
+      const compressedRules = await this.fetchBehaviorRules();
 
       // Apply model routing if configured
       let selectedModel: string | null = null;
@@ -336,6 +363,17 @@ export class AgentLoop {
           return;
         }
 
+        const executionSnapshot = await this.fetchPortfolio(true);
+        if (!isRuntimeLiveArmed(executionSnapshot)) {
+          this.config.onTradeResult?.({
+            action: decision.action,
+            token: decision.token,
+            amount: decision.amount,
+            response: 'Runtime not armed: backend autonomous_runtime is not live_armed; trade_command was not called.',
+          });
+          return;
+        }
+
         // --- Client-side BehaviorRule pre-check ---
         const tradeAmount = parseFloat(decision.amount ?? '0') || 0;
         this.resetHourlyCounterIfNeeded();
@@ -383,9 +421,9 @@ export class AgentLoop {
    * Result is cached for 30 seconds. On failure, returns an empty snapshot
    * so the decision loop continues with degraded context.
    */
-  private async fetchPortfolio(): Promise<AgentPortfolioSnapshot> {
+  private async fetchPortfolio(forceRefresh = false): Promise<AgentPortfolioSnapshot> {
     const now = Date.now();
-    if (this.portfolioCache && (now - this.portfolioCache.fetchedAt) < PORTFOLIO_TTL_MS) {
+    if (!forceRefresh && this.portfolioCache && (now - this.portfolioCache.fetchedAt) < PORTFOLIO_TTL_MS) {
       return this.portfolioCache.snapshot;
     }
 

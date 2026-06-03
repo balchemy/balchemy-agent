@@ -7,13 +7,31 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.3.0] — 2026-06-03
+
+### Changed
+
+- Align the SDK and CLI with the autonomous dual-LLM runtime contract.
+- Add safe runtime/read surfaces for context snapshots, market briefs, candidate reports, risk reports, and backend runtime control.
+- Keep raw/internal research, discovery, and portfolio tools hidden from public MCP routing.
+- Require a fresh backend `live_armed` runtime state before SDK/local runners can send `trade_command`.
+- Redact autonomous control and prompt-like inputs from public audit summaries.
+
+### Notes
+
+- No wallet keys, trading internals, or backend policy logic are shipped in the public packages.
+- Publish `@balchemyai/agent-sdk@0.3.0` before `balchemy@0.3.0` so the CLI dependency resolves from npm semver.
+
 ## [0.2.10] — 2026-06-03
 
 ### Changed
 
 - Stop the SDK agent loop from calling the hidden `agent_portfolio` MCP tool; it now uses the default-exposed `agent_status` surface for runtime context.
+- Gate SDK `trade_command` calls on a fresh backend `autonomous_runtime` state; local `shadowMode=false` no longer bypasses `live_armed`/paused control.
 - Stop the CLI status refresh from polling hidden portfolio tools and clarify the README tool table to match `tools/list`.
+- Add CLI runtime control commands for backend status, pause, resume, arm, and disarm.
 - Keep CLI prompts aligned with advertised MCP tools so the external LLM does not invent hidden tool names.
+- Clarify backend setup guidance so external agents do not call hidden portfolio tools directly.
 
 ### Notes
 

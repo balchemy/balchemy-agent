@@ -1360,7 +1360,7 @@ ${walletLines.join("\n")}
       return;
     }
 
-    if (name === "agent_portfolio") {
+    if (name === "agent_context_snapshot") {
       this.applyPortfolioSnapshot(parsed);
       return;
     }

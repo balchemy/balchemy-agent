@@ -47,3 +47,14 @@ test("parseCliArgs keeps auth login and logout grouped", () => {
   assert.equal(commandKey(logout.commandPath), "auth logout");
   assert.equal(logout.flags.force, true);
 });
+
+test("parseCliArgs groups autonomous runtime control commands", () => {
+  const pause = parseCliArgs(["control", "pause", "--json"]);
+  const setMode = parseCliArgs(["agent", "control", "set-mode", "shadow"]);
+
+  assert.equal(commandKey(pause.commandPath), "control pause");
+  assert.deepEqual(pause.args, []);
+  assert.equal(pause.flags.json, true);
+  assert.equal(commandKey(setMode.commandPath), "agent control");
+  assert.deepEqual(setMode.args, ["set-mode", "shadow"]);
+});
