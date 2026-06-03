@@ -14,6 +14,7 @@
 import { randomUUID } from "node:crypto";
 import type { BalchemyMcpClient } from "@balchemyai/agent-sdk";
 import type { TradeConfirmationDetails } from "./types.js";
+import { buildTradeConfirmationDetails } from "./trade-confirmation.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -237,24 +238,22 @@ export class ChatAgent {
 
     let resultText: string;
 
-    if (tc.function.name === "trade_command" && confirmTrade) {
-      const intent = String(args.intent ?? args.message ?? "trade");
-      const action = String(args.action ?? args.side ?? args.intent ?? "trade");
-      const token = String(args.token ?? args.tokenMint ?? args.tokenAddress ?? args.mint ?? "unknown");
-      const amount = String(args.amount ?? args.size ?? args.solAmount ?? args.usdAmount ?? "?");
-      const chain = String(args.chain ?? args.network ?? "unknown");
-      const unit = chain.toLowerCase().includes("base") ? "USD/USDC" : "SOL";
-      const preview = `${action.toUpperCase()} ${amount} ${unit} → ${token.slice(0, 18)}`;
+    if (tc.function.name === "trade_command") {
+      const tradeDetails = buildTradeConfirmationDetails(args);
+      if (!tradeDetails.canApprove) {
+        resultText = `Trade blocked before MCP call: ${tradeDetails.blockReason ?? "incomplete trade preview"}`;
+        onToolCall?.(tc.function.name, resultText);
+        this.history.push({ role: "tool", content: resultText, tool_call_id: tc.id });
+        return;
+      }
+      if (!confirmTrade) {
+        resultText = "Trade blocked before MCP call: no interactive confirmation callback is available.";
+        onToolCall?.(tc.function.name, resultText);
+        this.history.push({ role: "tool", content: resultText, tool_call_id: tc.id });
+        return;
+      }
 
-      const confirmed = await confirmTrade({
-        preview,
-        intent,
-        action,
-        token,
-        amount,
-        chain,
-        rawArgs: args,
-      });
+      const confirmed = await confirmTrade(tradeDetails);
       if (!confirmed) {
         resultText = "Trade cancelled by user.";
         onToolCall?.(tc.function.name, resultText);
@@ -660,6 +659,8 @@ You have access to MCP tools via tool calling. Always call tools when you need t
 
 Use only MCP tools that are listed for this session. For runtime, portfolio, open-position, pending-order, context, or activity snapshot requests, use agent_context_snapshot when it is advertised; otherwise use agent_status and clearly say which data is unavailable. For research, portfolio, new launch, trending-token, liquidity-scan, opportunity, candidate, or Turkish prompts such as "tara" / "yeni launch", use the dedicated advertised safe tool when present: agent_market_brief for broad discovery, agent_candidate_report for one specific asset, and agent_risk_report for one specific asset's risk. Use ask_bot only as fallback when no dedicated safe tool is available. Never invent or call tool names that are not available.
 
+For runtime mutations such as pause, resume, arm, disarm, or set-mode, use agent_control only when it is advertised. If agent_control is not advertised or the MCP key lacks manage scope, say the mutation is unavailable in this session. Do not answer a pause/resume/arm/disarm request by only reading agent_context_snapshot.
+
 ## SETUP FLOW
 
 When setup is incomplete, check setup status with the available setup tool. Then guide the user in chat, one question at a time. Do NOT run a separate terminal wizard and do NOT skip steps.
@@ -729,6 +730,8 @@ When setup is incomplete, check setup status with the available setup tool. Then
 - Respect the user's rules at all times.
 - When a tool is unavailable, rate limited, degraded, or not present in tools/list, state that exact condition and stop. Do not say vague follow-ups like "istersen tekrar deneyebilirim" or "I can try again" unless the user asks you to retry. Give the concrete next diagnostic step instead.
 - Never treat missing market/risk/provider data as a safe result. Say unavailable/degraded and do not recommend execution.
+- Never call trade_command for a random token, unknown token, broad discovery result, missing chain, missing amount, or unresolved ticker. First use read-only discovery/risk tools, then ask the user to choose an exact token/mint/contract and amount.
+- A trade_command request must include exact action, chain, token/mint/contract, and amount. If any of those facts are unknown, stop with blocked/unavailable; do not send the MCP trade call.
 
 ## LANGUAGE
 Respond in the same language the user writes in. Turkish input → Turkish response. English → English.

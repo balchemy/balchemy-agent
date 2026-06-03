@@ -7,6 +7,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.3.5] — 2026-06-04
+
+### Fixed
+
+- Fail closed in the CLI cockpit before `trade_command` when action, chain, token, or amount is missing, random, or unknown.
+- Require an exact trade confirmation phrase instead of a bare `TRADE` confirmation.
+- Label side-less confirmed trade messages as `TRADE` instead of defaulting to `SELL`.
+- Clarify runtime pause/resume/arm/disarm routing so chat does not answer mutation requests with read-only snapshots.
+
+### Notes
+
+- No wallet keys, trading internals, or backend policy logic are shipped in the public packages.
+- Publish `@balchemyai/agent-sdk@0.3.5` before `balchemy@0.3.5` so the CLI dependency resolves from npm semver.
+
 ## [0.3.4] — 2026-06-04
 
 ### Fixed

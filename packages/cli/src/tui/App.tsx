@@ -190,14 +190,20 @@ export function App({ config }: AppProps): React.ReactElement {
   // Trade confirmation callback
   const confirmTrade = useCallback((details: TradeConfirmationDetails): Promise<boolean> => {
     return new Promise((resolve) => {
+      if (!details.canApprove) {
+        addErrorMsg(`Trade check blocked: ${details.blockReason ?? "incomplete trade preview"}`);
+        resolve(false);
+        return;
+      }
       setTradeConfirm({ details, resolve });
       setConfirmKey((k) => k + 1);
     });
-  }, []);
+  }, [addErrorMsg]);
 
   const handleConfirmInput = useCallback((value: string) => {
     const normalized = value.trim().toUpperCase();
-    const approved = normalized === "TRADE";
+    const expected = tradeConfirm?.details.approvalPhrase.trim().toUpperCase() ?? "";
+    const approved = expected.length > 0 && normalized === expected;
     const rejected = normalized === "N" || normalized === "NO" || normalized === "CANCEL" || normalized === "IPTAL";
     if (!tradeConfirm) return;
 
@@ -743,12 +749,13 @@ export function App({ config }: AppProps): React.ReactElement {
           </Box>
           <Box marginTop={1} flexDirection="column">
             <Text color="yellow" bold>Approve only if agent, host, chain, token and amount all match your intent.</Text>
-            <Text dimColor>Type TRADE to execute through MCP, or anything else to cancel.</Text>
+            <Text dimColor>Type this exact phrase to execute, or anything else to cancel:</Text>
+            <Text color="red" bold>{tradeConfirm.details.approvalPhrase}</Text>
           </Box>
           <Box marginTop={1}>
             <TextInput
               key={confirmKey}
-              placeholder="TRADE or cancel"
+              placeholder="exact phrase or cancel"
               onSubmit={handleConfirmInput}
             />
           </Box>

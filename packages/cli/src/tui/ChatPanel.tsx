@@ -53,8 +53,9 @@ function messageStyle(msg: ChatMessage): { label: string; color: TextTone; bold?
     case "user":
       return { label: "YOU", color: "yellow" };
     case "trade": {
-      const color = msg.action === "buy" ? "green" : "red";
-      return { label: msg.action === "buy" ? "BUY" : "SELL", color, bold: true };
+      if (msg.action === "buy") return { label: "BUY", color: "green", bold: true };
+      if (msg.action === "sell") return { label: "SELL", color: "red", bold: true };
+      return { label: "TRADE", color: "yellow", bold: true };
     }
     case "error":
       return { label: "ERROR", color: "red" };

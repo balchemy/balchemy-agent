@@ -32,6 +32,9 @@ export interface TradeConfirmationDetails {
   token: string;
   amount: string;
   chain: string;
+  approvalPhrase: string;
+  canApprove: boolean;
+  blockReason?: string;
   rawArgs: Record<string, unknown>;
 }
 

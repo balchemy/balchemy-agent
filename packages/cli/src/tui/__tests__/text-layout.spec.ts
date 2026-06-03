@@ -174,6 +174,20 @@ test("plain transcript export preserves content without panel borders", () => {
   assert.equal(transcript.includes("│"), false);
 });
 
+test("trade transcript without explicit side uses neutral trade label", () => {
+  const transcript = formatTranscriptPlainText([
+    {
+      id: "msg-1",
+      type: "trade",
+      text: "Confirmed: TRADE BUY SOLANA 0.1 So111111...111112",
+      timestamp: Date.parse("2026-02-11T00:00:00.000Z"),
+    },
+  ]);
+
+  assert.match(transcript, /^TRADE/m);
+  assert.equal(transcript.includes("SELL"), false);
+});
+
 test("transcript viewport scrolls by rendered rows", () => {
   const rows = buildTranscriptRows(
     [
