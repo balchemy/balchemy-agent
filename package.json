@@ -8,6 +8,7 @@
     "url": "https://github.com/balchemy/balchemy-agent"
   },
   "license": "MIT",
+  "packageManager": "pnpm@10.24.0",
   "engines": {
     "node": ">=18.0.0"
   },
