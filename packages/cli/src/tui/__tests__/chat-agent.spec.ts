@@ -174,10 +174,10 @@ test("ChatAgent blocks incomplete or random trade previews before confirmation a
   assert.equal(reply, "blocked");
   assert.equal(confirmationCalls, 0);
   assert.deepEqual(mcpCalls, []);
-  assert.equal(toolEvents.length, 1);
-  assert.equal(toolEvents[0]?.name, "trade_command");
-  assert.match(toolEvents[0]?.result ?? "", /Trade blocked before MCP call/);
-  assert.match(toolEvents[0]?.result ?? "", /Random or unknown token/);
+  assert.deepEqual(toolEvents, []);
+  const blockedToolResult = agent.history.find((entry) => entry.role === "tool")?.content ?? "";
+  assert.match(blockedToolResult, /Trade blocked before MCP call/);
+  assert.match(blockedToolResult, /Random or unknown token/);
 });
 
 test("ChatAgent follows backend suggestedTool redirects for broad discovery", async () => {

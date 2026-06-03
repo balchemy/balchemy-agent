@@ -242,13 +242,11 @@ export class ChatAgent {
       const tradeDetails = buildTradeConfirmationDetails(args);
       if (!tradeDetails.canApprove) {
         resultText = `Trade blocked before MCP call: ${tradeDetails.blockReason ?? "incomplete trade preview"}`;
-        onToolCall?.(tc.function.name, resultText);
         this.history.push({ role: "tool", content: resultText, tool_call_id: tc.id });
         return;
       }
       if (!confirmTrade) {
         resultText = "Trade blocked before MCP call: no interactive confirmation callback is available.";
-        onToolCall?.(tc.function.name, resultText);
         this.history.push({ role: "tool", content: resultText, tool_call_id: tc.id });
         return;
       }
@@ -256,7 +254,6 @@ export class ChatAgent {
       const confirmed = await confirmTrade(tradeDetails);
       if (!confirmed) {
         resultText = "Trade cancelled by user.";
-        onToolCall?.(tc.function.name, resultText);
         this.history.push({ role: "tool", content: resultText, tool_call_id: tc.id });
         return;
       }
