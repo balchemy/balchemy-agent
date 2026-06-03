@@ -7,6 +7,7 @@ import {
   wrapText,
 } from "../text-layout.js";
 import {
+  isSetupBlockedSideEffectMessage,
   isSetupBypassReadOnlyMessage,
 } from "../AgentBridge.js";
 import {
@@ -173,7 +174,25 @@ test("read-only runtime prompts bypass setup wizard input handling", () => {
     isSetupBypassReadOnlyMessage("Agent context snapshot çıkar. Portföy, açık pozisyon ve pending order varsa göster."),
     true,
   );
+  assert.equal(
+    isSetupBypassReadOnlyMessage("Solana için güvenli market brief çıkar. Hiçbir buy/sell/swap execute etme. Kaynak eksikse degraded veya unavailable de."),
+    true,
+  );
+  assert.equal(
+    isSetupBypassReadOnlyMessage("Yeni pair adaylarını değerlendir ama hiçbir buy/sell/swap execute etme. Risk verisi eksikse degraded de."),
+    true,
+  );
   assert.equal(isSetupBypassReadOnlyMessage("both"), false);
   assert.equal(isSetupBypassReadOnlyMessage("0x16ad3a6F473Ba57Cd944d461E48a327802b63bFa"), false);
   assert.equal(isSetupBypassReadOnlyMessage("3%"), false);
+});
+
+test("side-effect prompts are blocked while setup wizard is incomplete", () => {
+  assert.equal(isSetupBlockedSideEffectMessage("0.01 SOL ile rastgele yeni bir token al."), true);
+  assert.equal(isSetupBlockedSideEffectMessage("buy 0.01 SOL of BONK"), true);
+  assert.equal(isSetupBlockedSideEffectMessage("control pause çalıştır"), true);
+  assert.equal(isSetupBlockedSideEffectMessage("runtime arm et"), true);
+  assert.equal(isSetupBlockedSideEffectMessage("both"), false);
+  assert.equal(isSetupBlockedSideEffectMessage("0x16ad3a6F473Ba57Cd944d461E48a327802b63bFa"), false);
+  assert.equal(isSetupBlockedSideEffectMessage("3%"), false);
 });

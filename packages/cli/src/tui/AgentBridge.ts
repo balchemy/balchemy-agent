@@ -47,6 +47,16 @@ export function isSetupBypassReadOnlyMessage(text: string): boolean {
   );
 }
 
+export function isSetupBlockedSideEffectMessage(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+
+  return (
+    /\b(buy|sell|swap|trade|execute|purchase|long|short|withdraw|approve|arm|disarm|pause|resume|set[-\s]?mode)\b/i.test(normalized)
+    || /\b(al|sat|swap|takas|işlem yap|islem yap|execute et|çek|cek|onayla|arm et|disarm et|pause et|resume et|duraklat|devam ettir)\b/i.test(normalized)
+  );
+}
+
 function truncateError(raw: string): string {
   // Extract HTTP status code if present
   const statusMatch = raw.match(/\b(4\d{2}|5\d{2})\b/);
@@ -545,6 +555,7 @@ export class AgentBridge {
   private setupPollTimer: NodeJS.Timeout | null = null;
   private setupFlow: SetupFlowState | null = null;
   private setupStatusUnavailableForScope = false;
+  private setupScopeNoticeShown = false;
   private knownWallets: WalletInfo[] = [];
 
   constructor(config: TuiConfig, setters: StateSetters) {
@@ -572,6 +583,8 @@ export class AgentBridge {
    * Returns as soon as the input is ready — the greeting runs in the background.
    */
   async start(): Promise<void> {
+    this.setupScopeNoticeShown = false;
+
     // Init the ChatAgent (external LLM with tool-calling)
     this.chatAgent = new ChatAgent(
       {
@@ -676,6 +689,7 @@ export class AgentBridge {
         sseConnected: false,
         status: "setup-scope-required",
       }));
+      this.setupScopeNoticeShown = true;
     } else {
       this.setters.setStatus((prev) => ({
         ...prev,
@@ -767,6 +781,11 @@ export class AgentBridge {
         return;
       }
 
+      if (isSetupBlockedSideEffectMessage(text)) {
+        this.addAgentMessage("Setup is incomplete, so I will not execute trade, wallet, approval, or runtime-control actions from this chat state. Continue setup, switch to a setup/manage-scope key, or ask a read-only status/rules/context question.");
+        return;
+      }
+
       this.setters.setThinking(true);
       try {
         await this.handleSetupInput(text);
@@ -812,7 +831,10 @@ export class AgentBridge {
         this.setupPollTimer = null;
       }
       this.setters.setStatus((prev) => ({ ...prev, sseConnected: false, status: "setup-scope-required" }));
-      this.addAgentMessage("Setup status now requires a higher-scope MCP key. I will not restart setup or ask for owner wallets with this key.");
+      if (!this.setupScopeNoticeShown) {
+        this.addAgentMessage("Setup status now requires a higher-scope MCP key. I will not restart setup or ask for owner wallets with this key.");
+        this.setupScopeNoticeShown = true;
+      }
       return;
     }
     const nowComplete = this.isSetupComplete(setupStatus);
@@ -1345,6 +1367,7 @@ ${walletLines.join("\n")}
       this.addErrorMessage(`Setup failed: ${friendlyError(err).replace(/^LLM error: /, "")}`);
       if (isMcpScopeError(err)) {
         this.setupStatusUnavailableForScope = true;
+        this.setupScopeNoticeShown = true;
         this.setupFlow = null;
         if (this.setupPollTimer) {
           clearInterval(this.setupPollTimer);
@@ -1588,6 +1611,7 @@ ${walletLines.join("\n")}
         return null;
       }
       this.setupStatusUnavailableForScope = false;
+      this.setupScopeNoticeShown = false;
       return parseSetupStatusSnapshot(structured ?? undefined);
     } catch (error: unknown) {
       this.setupStatusUnavailableForScope = isMcpScopeError(error);

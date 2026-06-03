@@ -7,6 +7,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.3.3] — 2026-06-04
+
+### Fixed
+
+- Harden the CLI cockpit setup state machine so read-only runtime/market/risk prompts do not get consumed by onboarding.
+- Block trade, wallet, approval, and runtime-control mutation prompts while setup is incomplete instead of routing them through setup or tool execution.
+- Avoid repeated setup-scope-required notices after an MCP key lacks setup/manage scope.
+
+### Notes
+
+- No wallet keys, trading internals, or backend policy logic are shipped in the public packages.
+- Publish `@balchemyai/agent-sdk@0.3.3` before `balchemy@0.3.3` so the CLI dependency resolves from npm semver.
+
 ## [0.3.2] — 2026-06-03
 
 ### Fixed
