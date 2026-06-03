@@ -103,8 +103,8 @@ export function buildSetupRequiredMessage(status: SetupStatusSnapshot): string {
   }
 
   if (!status.strategyConfigured && !status.tradingConfigured) {
-    return "Setup incomplete. Next: define hard limits and describe your trading strategy so live execution can be configured.";
+    return "Setup incomplete. Next: define hard limits and describe your trading strategy. Execution remains approval-gated.";
   }
 
-  return "Setup incomplete. Continue the remaining setup steps in chat before live trading starts.";
+  return "Setup incomplete. Continue the remaining setup steps in chat before approved trading can start.";
 }

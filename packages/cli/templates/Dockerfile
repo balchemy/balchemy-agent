@@ -8,9 +8,8 @@ WORKDIR /app
 # Install the published CLI and SDK package names.
 RUN npm install -g @balchemyai/agent-sdk balchemy
 
-# Copy user config files
+# Copy non-secret user config files; inject runtime secrets via env/secret mounts.
 COPY agent.config.yaml ./
-COPY .env ./
 
 # Health check: verify process is alive
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \

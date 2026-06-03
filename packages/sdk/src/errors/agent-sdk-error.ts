@@ -1,4 +1,5 @@
 import type { AgentSdkErrorCode } from "./error-codes";
+import { redactSecretLikeText, sanitizePublicErrorDetails } from "../utils/redaction";
 
 export class AgentSdkError extends Error {
   readonly code: AgentSdkErrorCode;
@@ -11,10 +12,10 @@ export class AgentSdkError extends Error {
     status?: number;
     details?: unknown;
   }) {
-    super(params.message);
+    super(redactSecretLikeText(params.message));
     this.name = "AgentSdkError";
     this.code = params.code;
     this.status = params.status;
-    this.details = params.details;
+    this.details = sanitizePublicErrorDetails(params.details);
   }
 }

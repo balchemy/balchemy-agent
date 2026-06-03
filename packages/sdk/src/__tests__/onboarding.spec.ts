@@ -170,4 +170,36 @@ describe("AgentOnboardingClient", () => {
       expect("scope" in body).toBe(false);
     });
   });
+
+  // ── identity token revoke ────────────────────────────────────────────────
+  describe("identity token revoke", () => {
+    it("sends bearer identity proof when revoking a token", async () => {
+      const { onboarding, postMock } = buildClient();
+      await onboarding.revokeIdentityToken({
+        identityToken: "identity-proof-token",
+        jti: "jti-123",
+        ttlSeconds: 300,
+      });
+
+      expect(postMock).toHaveBeenCalledWith(
+        "/public/erc8004/onboarding/tokens/revoke",
+        { jti: "jti-123", ttlSeconds: 300 },
+        { Authorization: "Bearer identity-proof-token" }
+      );
+    });
+
+    it("sends bearer identity proof when checking revoke status", async () => {
+      const { onboarding, postMock } = buildClient();
+      await onboarding.getIdentityTokenRevokeStatus({
+        identityToken: "identity-proof-token",
+        jti: "jti-123",
+      });
+
+      expect(postMock).toHaveBeenCalledWith(
+        "/public/erc8004/onboarding/tokens/revoke-status",
+        { jti: "jti-123" },
+        { Authorization: "Bearer identity-proof-token" }
+      );
+    });
+  });
 });

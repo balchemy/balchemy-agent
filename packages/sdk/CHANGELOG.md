@@ -7,6 +7,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.2.8] — 2026-06-03
+
+### Changed
+
+- Sync the public SDK and CLI source with the latest monorepo onboarding, session, browser, and terminal UX updates.
+- Harden SDK request, onboarding, telemetry, redaction, and public-boundary coverage for agent-facing clients.
+- Refresh CLI setup guidance, config loading, OAuth/browser handling, and session synchronization behavior.
+
+### Notes
+
+- No wallet keys, trading internals, or backend policy logic are shipped in the public packages.
+- Publish `@balchemyai/agent-sdk@0.2.8` before `balchemy@0.2.8` so the CLI dependency resolves from npm semver.
+
 ## [0.2.7] — 2026-05-29
 
 ### Added

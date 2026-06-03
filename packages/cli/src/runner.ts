@@ -8,6 +8,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { AgentLoop } from '@balchemyai/agent-sdk';
 import { loadConfig } from './config-loader.js';
+import { redactSecrets } from './output.js';
 
 function loadDotEnv(configPath: string): void {
   // Look for .env relative to the config file directory
@@ -49,7 +50,7 @@ export async function runAgent(configPath: string): Promise<void> {
       );
     },
     onError: (err) => {
-      process.stderr.write(`[agent] error: ${err.message}\n`);
+      process.stderr.write(`[agent] error: ${redactSecrets(err.message)}\n`);
     },
   });
 

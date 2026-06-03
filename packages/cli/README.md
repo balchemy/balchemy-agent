@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>Balchemy CLI</strong><br/>
-  Initialize a local trading agent, connect model credentials, set risk rules, and generate deployment files.
+Initialize a local Balchemy MCP agent client, connect model credentials, set risk rules, and generate deployment files.
 </p>
 
 <p align="center">
@@ -27,7 +27,7 @@ The inner LLM is infrastructure support. It fetches data and formats responses.
 It does not make trading decisions.
 
 ```text
-Strategy -> external LLM -> Balchemy MCP -> policy -> execution -> record
+Strategy -> external LLM -> Balchemy MCP -> policy -> approved action -> record
                                   |
                                   v
                          inner LLM support
@@ -43,9 +43,13 @@ The wizard handles five local steps:
 
 1. Choose an LLM provider.
 2. Add the provider API key.
-3. Set wallet and chain preferences.
-4. Define behavior rules in plain language.
-5. Start or export the agent runtime.
+3. Connect a new or existing Balchemy MCP principal.
+4. Review the files the CLI will write.
+5. Start or export the local agent client.
+
+New walletless agents are provisioned first. Root/recovery wallet binding happens
+later in the setup chat through the authenticated MCP setup flow; until then the
+agent should be treated as unbound and shadow/approval-gated.
 
 ## Commands
 
@@ -89,10 +93,9 @@ Secrets belong in `.env`. Do not commit that file.
 
 ### Trade
 
-- Buy and sell on Solana and EVM chains.
-- Create limit orders.
-- Schedule DCA rules.
-- Use trailing stops.
+- Send trade instructions through the curated MCP surface when the backend grants the right scope.
+- Keep execution behind Balchemy policy, replay/rate checks, and product approval rules.
+- Use the Hub/backend contract as the source of truth for available execution tools.
 
 ### Research
 
@@ -156,14 +159,13 @@ Pick the model in the wizard or edit `agent.config.yaml`.
 The SDK includes an `AgentLoop` for long-running agents.
 
 ```ts
-import { AgentLoop, BalchemyAgentSdk } from "@balchemyai/agent-sdk";
+import { AgentLoop } from "@balchemyai/agent-sdk";
 
-const sdk = new BalchemyAgentSdk({
-  apiBaseUrl: "https://api.balchemy.ai/api",
-});
-
-const loop = new AgentLoop(sdk, {
+const loop = new AgentLoop({
+  mcpEndpoint: "https://api.balchemy.ai/mcp/YOUR_PUBLIC_ID",
   apiKey: "your-mcp-api-key",
+  llmProvider: "openai",
+  llmApiKey: process.env.OPENAI_API_KEY ?? "",
 });
 
 await loop.start();
@@ -172,7 +174,7 @@ await loop.start();
 Event flow:
 
 ```text
-Market event -> SSE -> external LLM evaluates -> MCP tool call -> execution -> confirmation
+Market event -> SSE -> external LLM evaluates -> MCP tool call -> policy/approval -> record
 ```
 
 ## Hub

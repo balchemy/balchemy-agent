@@ -45,12 +45,12 @@ function makeHttpSuccess(result: unknown): jest.Mock {
   });
 }
 
-function makeFetchError(errorMsg: string, code = -32601): jest.Mock {
+function makeFetchError(errorMsg: string, code = -32601, data?: unknown): jest.Mock {
   return jest.fn().mockResolvedValue({
     ok: true,
     status: 200,
     text: jest.fn().mockResolvedValue(
-      JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code, message: errorMsg } })
+      JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code, message: errorMsg, data } })
     ),
   });
 }
@@ -114,40 +114,27 @@ describe("BalchemyMcpClient", () => {
 
   // ── convenience methods ──────────────────────────────────────────────────
   describe("convenience methods", () => {
-    it("agentExecute calls agent_execute tool", async () => {
+    it("askBot calls ask_bot tool", async () => {
       const fetchFn = makeFetchSuccess({ content: [{ type: "text", text: "ok" }] });
       const client = buildClient(fetchFn);
-      await client.agentExecute({ instruction: "test" });
+      await client.askBot({ message: "test" });
 
       const [, init] = fetchFn.mock.calls[0] as [string, RequestInit];
       const body = JSON.parse(init.body as string) as {
         params: { name: string; arguments: Record<string, unknown> };
       };
-      expect(body.params.name).toBe("agent_execute");
-      expect(body.params.arguments).toEqual({ instruction: "test" });
+      expect(body.params.name).toBe("ask_bot");
+      expect(body.params.arguments).toEqual({ message: "test" });
     });
 
-    it("agentMarketDiscovery calls agent_market_discovery tool", async () => {
-      const fetchFn = makeFetchSuccess({ content: [{ type: "text", text: "ok" }] });
-      const client = buildClient(fetchFn);
-      await client.agentMarketDiscovery({
-        query: "solana new launches",
-        chain: "solana",
-        signals: ["launches", "social"],
-        limit: 5,
-      });
+    it("does not expose privileged typed trading helpers", () => {
+      const fetchFn = makeFetchSuccess({ content: [] });
+      const client = buildClient(fetchFn) as unknown as Record<string, unknown>;
 
-      const [, init] = fetchFn.mock.calls[0] as [string, RequestInit];
-      const body = JSON.parse(init.body as string) as {
-        params: { name: string; arguments: Record<string, unknown> };
-      };
-      expect(body.params.name).toBe("agent_market_discovery");
-      expect(body.params.arguments).toEqual({
-        query: "solana new launches",
-        chain: "solana",
-        signals: ["launches", "social"],
-        limit: 5,
-      });
+      expect(client.tradeCommand).toBeUndefined();
+      expect(client.agentExecute).toBeUndefined();
+      expect(client.evmSwap).toBeUndefined();
+      expect(client.solanaSwap).toBeUndefined();
     });
 
     it("requestSeed throws deterministic disabled error", async () => {
@@ -198,6 +185,28 @@ describe("BalchemyMcpClient", () => {
       } catch (err: unknown) {
         expect((err as AgentSdkError).code).toBe("execution_error");
         expect((err as AgentSdkError).message).toBe("Unknown tool: foo");
+      }
+    });
+
+    it("redacts synthetic secret-shaped values from JSON-RPC error messages and data", async () => {
+      const fetchFn = makeFetchError(
+        "failed with balc_syntheticSecretKey123456",
+        -32000,
+        {
+          authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.synthetic.signature",
+          walletAddress: "0x1111111111111111111111111111111111111111",
+        }
+      );
+      const client = buildClient(fetchFn);
+
+      try {
+        await client.callTool("foo", {});
+        fail("should have thrown");
+      } catch (err: unknown) {
+        expect(err).toBeInstanceOf(AgentSdkError);
+        expect((err as AgentSdkError).message).toBe("failed with [REDACTED]");
+        expect(JSON.stringify((err as AgentSdkError).details)).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+        expect(JSON.stringify((err as AgentSdkError).details)).not.toContain("0x1111111111111111111111111111111111111111");
       }
     });
   });

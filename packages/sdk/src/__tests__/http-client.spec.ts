@@ -96,6 +96,27 @@ describe("HttpClient", () => {
         status: 200,
       });
     });
+
+    it("redacts secret-shaped values from canonical error details", async () => {
+      const fetchFn = makeFetch(200, {
+        success: false,
+        error: {
+          code: "BAD_REQUEST",
+          message: "failed with balc_syntheticSecretKey123456",
+          context: { authorization: "Bearer eyJhbGciOiJIUzI1NiJ9.synthetic.signature" },
+        },
+      });
+      const client = buildClient(fetchFn);
+
+      try {
+        await client.get("/path");
+        fail("should have thrown");
+      } catch (err: unknown) {
+        expect(err).toBeInstanceOf(AgentSdkError);
+        expect(JSON.stringify((err as AgentSdkError).details)).not.toContain("balc_syntheticSecretKey123456");
+        expect(JSON.stringify((err as AgentSdkError).details)).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+      }
+    });
   });
 
   // ── POST ─────────────────────────────────────────────────────────────────
@@ -144,6 +165,31 @@ describe("HttpClient", () => {
         }
       });
     }
+  });
+
+  describe("HTTP error redaction", () => {
+    it("redacts synthetic secrets from HTTP error details", async () => {
+      const fetchFn = makeFetch(500, {
+        message: "backend failed with sk-syntheticOpenAiKey1234567890",
+        details: {
+          apiKey: "balc_syntheticSecretKey123456",
+          privateKey: "synthetic-private-key-value",
+          walletAddress: "0x1111111111111111111111111111111111111111",
+        },
+      }, false);
+      const client = buildClient(fetchFn);
+
+      try {
+        await client.get("/path");
+        fail("should have thrown");
+      } catch (err: unknown) {
+        expect(err).toBeInstanceOf(AgentSdkError);
+        expect((err as AgentSdkError).message).not.toContain("sk-syntheticOpenAiKey1234567890");
+        expect(JSON.stringify((err as AgentSdkError).details)).not.toContain("balc_syntheticSecretKey123456");
+        expect(JSON.stringify((err as AgentSdkError).details)).not.toContain("synthetic-private-key-value");
+        expect(JSON.stringify((err as AgentSdkError).details)).not.toContain("0x1111111111111111111111111111111111111111");
+      }
+    });
   });
 
   // ── Empty body ───────────────────────────────────────────────────────────

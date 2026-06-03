@@ -16,7 +16,6 @@ type LoopInternals = {
   portfolioCache: { snapshot: unknown; fetchedAt: number } | null;
   rulesCache: { compressed: string; fetchedAt: number } | null;
   mcp: {
-    agentPortfolio: jest.Mock;
     readResource: jest.Mock;
     callTool: jest.Mock;
   };
@@ -71,26 +70,28 @@ describe('AgentLoop — fetch logic', () => {
     internals = asInternals(loop);
 
     // Replace real MCP client with mocks
-    internals.mcp.agentPortfolio = jest.fn().mockResolvedValue(
-      makeMcpToolResponse('{"totalValueSol":12.5,"summary":"Healthy portfolio"}'),
-    );
     internals.mcp.readResource = jest.fn().mockResolvedValue([
       { uri: 'balchemy://behavior-rules/abc123', text: 'Max position: 5%' },
     ]);
-    internals.mcp.callTool = jest.fn().mockResolvedValue(makeMcpToolResponse('ok'));
+    internals.mcp.callTool = jest.fn().mockImplementation(async (name: string) => {
+      if (name === 'agent_portfolio') {
+        return makeMcpToolResponse('{"totalValueSol":12.5,"summary":"Healthy portfolio"}');
+      }
+      return makeMcpToolResponse('ok');
+    });
   });
 
   describe('fetchPortfolio()', () => {
     it('parses portfolio response and returns snapshot', async () => {
       const snapshot = await internals.fetchPortfolio();
       expect(snapshot).toEqual({ totalValueSol: 12.5, summary: 'Healthy portfolio' });
-      expect(internals.mcp.agentPortfolio).toHaveBeenCalledTimes(1);
+      expect(internals.mcp.callTool).toHaveBeenCalledWith('agent_portfolio', {});
     });
 
     it('caches result — second call within TTL skips MCP', async () => {
       await internals.fetchPortfolio();
       await internals.fetchPortfolio();
-      expect(internals.mcp.agentPortfolio).toHaveBeenCalledTimes(1);
+      expect(internals.mcp.callTool).toHaveBeenCalledTimes(1);
     });
 
     it('re-fetches after cache expiry', async () => {
@@ -98,11 +99,11 @@ describe('AgentLoop — fetch logic', () => {
       // Backdate cache to force expiry
       internals.portfolioCache!.fetchedAt = Date.now() - 31_000;
       await internals.fetchPortfolio();
-      expect(internals.mcp.agentPortfolio).toHaveBeenCalledTimes(2);
+      expect(internals.mcp.callTool).toHaveBeenCalledTimes(2);
     });
 
     it('returns empty snapshot on MCP failure (graceful degradation)', async () => {
-      internals.mcp.agentPortfolio = jest.fn().mockRejectedValue(new Error('network error'));
+      internals.mcp.callTool = jest.fn().mockRejectedValue(new Error('network error'));
       const errors: Error[] = [];
       (loop as unknown as { config: AgentLoopConfig }).config.onError = (e) => errors.push(e);
 
@@ -113,7 +114,7 @@ describe('AgentLoop — fetch logic', () => {
     });
 
     it('returns empty snapshot when MCP returns invalid JSON', async () => {
-      internals.mcp.agentPortfolio = jest.fn().mockResolvedValue(
+      internals.mcp.callTool = jest.fn().mockResolvedValue(
         makeMcpToolResponse('not-json'),
       );
       const snapshot = await internals.fetchPortfolio();
@@ -172,9 +173,8 @@ describe('AgentLoop — fetch logic', () => {
       const ri = asInternals(routedLoop);
 
       // Inject mock MCP
-      ri.mcp.agentPortfolio = jest.fn().mockResolvedValue(makeMcpToolResponse('{}'));
       ri.mcp.readResource = jest.fn().mockResolvedValue([]);
-      ri.mcp.callTool = jest.fn().mockResolvedValue(makeMcpToolResponse('ok'));
+      ri.mcp.callTool = jest.fn().mockResolvedValue(makeMcpToolResponse('{}'));
 
       // Inject mock LLM that confirms setModel was called
       const mockLlm = makeMockLlm('{"action":"hold"}');
@@ -192,9 +192,8 @@ describe('AgentLoop — fetch logic', () => {
 
     it('setModel is NOT called when cheapModel/fullModel not configured', async () => {
       const ri = asInternals(loop);
-      ri.mcp.agentPortfolio = jest.fn().mockResolvedValue(makeMcpToolResponse('{}'));
       ri.mcp.readResource = jest.fn().mockResolvedValue([]);
-      ri.mcp.callTool = jest.fn().mockResolvedValue(makeMcpToolResponse('ok'));
+      ri.mcp.callTool = jest.fn().mockResolvedValue(makeMcpToolResponse('{}'));
 
       const mockLlm = makeMockLlm('{"action":"hold"}');
       (loop as unknown as { llm: LlmAdapter }).llm = mockLlm;

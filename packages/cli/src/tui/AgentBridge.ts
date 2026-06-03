@@ -1285,7 +1285,7 @@ ${walletLines.join("\n")}
           return;
         }
         await this.callSetupAgent({
-          ...buildStrategyUpdateArgs(flow.strategyText, false),
+          ...buildStrategyUpdateArgs(flow.strategyText, this.config.shadowMode),
           chainStrategies: flow.chainStrategies,
           selectedChains: flow.selectedChains,
           solanaRecoveryWallet: flow.solanaRecoveryWallet,
@@ -1293,7 +1293,7 @@ ${walletLines.join("\n")}
           ...(flow.maxTradeUsd !== undefined ? { maxTradeUsd: flow.maxTradeUsd } : {}),
         });
         this.setupFlow = { ...flow, step: "subscriptions" };
-        this.addAgentMessage(`Strategy configured for live execution.\n\n${this.setupPromptFor("subscriptions")}`);
+        this.addAgentMessage(`Strategy configured. Execution remains scope- and approval-gated.\n\n${this.setupPromptFor("subscriptions")}`);
         return;
       }
 
@@ -1505,7 +1505,7 @@ ${walletLines.join("\n")}
     }
   }
 
-  /** Check if setup is complete. Returns true if ready to trade, false if needs setup. */
+  /** Check if setup is complete. Returns true if setup is ready, false if it needs setup. */
   private async fetchSetupStatus(): Promise<SetupStatusSnapshot | null> {
     try {
       const resp = await this.mcp.callTool("setup_agent", { action: "get_status" });
@@ -1533,7 +1533,7 @@ ${walletLines.join("\n")}
   /** Silent balance refresh — updates status panel only, no chat messages. */
   async refreshBalance(): Promise<void> {
     try {
-      const response = await this.mcp.agentPortfolio();
+      const response = await this.mcp.callTool("agent_portfolio", {});
       const text = response.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
       const parsed = parseJsonObject(text);
       if (parsed) this.applyPortfolioSnapshot(parsed);
@@ -1544,7 +1544,7 @@ ${walletLines.join("\n")}
 
   async checkBalance(): Promise<void> {
     try {
-      const response = await this.mcp.agentPortfolio();
+      const response = await this.mcp.callTool("agent_portfolio", {});
       const text = response.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
       const parsed = parseJsonObject(text);
       const snapshot = parsed
@@ -1558,7 +1558,7 @@ ${walletLines.join("\n")}
       if (parsed) this.applyPortfolioSnapshot(parsed);
       if (sol < 0.01 && !this.lowBalanceWarned) {
         this.lowBalanceWarned = true;
-        this.addErrorMessage(`Wallet balance looks low (${sol} SOL). Fund the selected trading wallet before live execution.`);
+        this.addErrorMessage(`Wallet balance looks low (${sol} SOL). Fund the selected trading wallet before approved execution.`);
       }
       if (sol >= 0.01) {
         this.lowBalanceWarned = false;

@@ -98,29 +98,19 @@ const { tools } = await mcp.listTools();
 const reply = await mcp.askBot({
   message: "What is the price of SOL?",
 });
+```
 
-const research = await mcp.agentExecute({
-  instruction: "Find low-risk Base setups with deep liquidity.",
-});
+For other tools, call the runtime-advertised name returned by `tools/list`:
 
-const quote = await mcp.evmQuote({
-  chainId: 8453,
-  sellToken: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-  buyToken: "0x4200000000000000000000000000000000000006",
-  sellAmount: "50000000",
-});
-
-const draftSwap = await mcp.evmSwap({
-  chainId: 8453,
-  sellToken: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-  buyToken: "0x4200000000000000000000000000000000000006",
-  sellAmount: "50000000",
-  submit: false,
+```ts
+const research = await mcp.callTool("ask_bot", {
+  message: "Find low-risk Base setups with deep liquidity.",
 });
 ```
 
-`submit: false` creates a draft/pending order. Use execution only when the agent
-has the right scope and the product flow expects on-chain action.
+The SDK does not expose typed swap/trade helper methods from the root client.
+Privileged tools require the backend-advertised tool surface, the right MCP key
+scope, replay/rate protection, and the approved product flow.
 
 ## Scope
 
@@ -145,7 +135,6 @@ import type { AgentSdkErrorCode } from "@balchemyai/agent-sdk";
 type SdkFailure = {
   code: AgentSdkErrorCode;
   message: string;
-  details: unknown;
 };
 
 function toSdkFailure(err: unknown): SdkFailure | null {
@@ -156,7 +145,6 @@ function toSdkFailure(err: unknown): SdkFailure | null {
   return {
     code: err.code,
     message: err.message,
-    details: err.details,
   };
 }
 ```
@@ -170,9 +158,9 @@ Known codes include `auth_error`, `policy_error`, `rate_limit`,
 ```ts
 import { getToolText, isToolError, parseToolJson } from "@balchemyai/agent-sdk";
 
-const response = await mcp.agentPortfolio();
+const response = await mcp.callTool("agent_status", {});
 
-const portfolio = isToolError(response)
+const status = isToolError(response)
   ? { error: getToolText(response) }
   : { data: parseToolJson(response) };
 ```
@@ -239,24 +227,29 @@ function handleEvent(event: SseEvent) {
 
 ```ts
 await sdk.revokeIdentityToken({
+  identityToken: response.identityAccess.token,
   jti: "token-jti",
   ttlSeconds: 86400,
 });
 
 const { revoked } = await sdk.getIdentityTokenRevokeStatus({
+  identityToken: response.identityAccess.token,
   jti: "token-jti",
 });
 ```
+
+The revoke routes are public at the HTTP guard layer, but they still require an
+`Authorization: Bearer <identity-access-token>` proof matching the token ID.
 
 ## Platform Endpoints
 
 | Endpoint | Path | Auth |
 | --- | --- | --- |
-| MCP server | `POST /api/mcp/{publicId}` | `Authorization: Bearer <mcp-api-key>` |
+| MCP server | `POST /mcp/{publicId}` | `Authorization: Bearer <mcp-api-key>` |
 | SIWE nonce | `POST /api/nest/auth/evm/nonce` | Public |
 | SIWE onboarding | `POST /api/public/erc8004/onboarding/siwe` | Public |
 | Walletless onboarding | `POST /api/public/erc8004/onboarding/identity` | Public |
-| Token revoke | `POST /api/public/erc8004/onboarding/tokens/revoke` | Public |
+| Token revoke | `POST /api/public/erc8004/onboarding/tokens/revoke` | Bearer identity proof |
 | JWKS | `GET /.well-known/jwks.json` | Public |
 | MCP discovery | `GET /.well-known/mcp.json` | Public |
 | Agent directory | `GET /api/nest/agents/verified/page` | Public |

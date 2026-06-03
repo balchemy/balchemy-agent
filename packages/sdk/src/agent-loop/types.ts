@@ -63,6 +63,8 @@ export interface AgentLoopConfig {
   llmTimeoutMs?: number;
   /** Max consecutive LLM failures before pausing. Default: 3 */
   maxConsecutiveFailures?: number;
+  /** Shadow mode defaults to true unless explicitly set false by an approved flow. */
+  shadowMode?: boolean;
   /** Callback: event received */
   onEvent?: (event: AgentEvent) => void;
   /** Callback: decision made */
@@ -71,7 +73,7 @@ export interface AgentLoopConfig {
   onError?: (error: Error) => void;
   /** Callback: status changed */
   onStatusChange?: (status: AgentStatus) => void;
-  /** Callback: trade result (after trade_command executes) */
+  /** Callback: trade result or shadow-mode non-execution notice */
   onTradeResult?: (result: { action: string; token?: string; amount?: string; response: string }) => void;
 }
 

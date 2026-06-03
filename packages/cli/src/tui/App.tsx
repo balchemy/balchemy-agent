@@ -701,14 +701,14 @@ export function App({ config }: AppProps): React.ReactElement {
         <Box borderStyle="round" borderColor="red" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth}>
           <Box marginBottom={1}>
             <HeaderBadge label="TRADE CHECK" tone="danger" />
-            {!compactLayout && <Text dimColor>  review before live execution</Text>}
+            {!compactLayout && <Text dimColor>  review before approved execution</Text>}
           </Box>
           <Text color="white" wrap="wrap">{tradeConfirm.details.preview}</Text>
           <Box flexDirection="column" marginTop={1}>
             <Text dimColor>Agent  {truncateMiddle(config.publicId, 28)}</Text>
             <Text dimColor>Host   {truncateMiddle(config.mcpEndpoint, 42)}</Text>
             <Text dimColor>Scope  MCP call through Balchemy execution guard</Text>
-            <Text dimColor>Mode   {config.shadowMode ? "shadow / no live order" : "LIVE / broadcasts if approved"}</Text>
+            <Text dimColor>Mode   {config.shadowMode ? "shadow / no live order" : "live-approved / broadcasts only after approval"}</Text>
             <Text dimColor>Chain  {tradeConfirm.details.chain}</Text>
             <Text dimColor>Intent {truncateEnd(tradeConfirm.details.intent, 52)}</Text>
             <Text dimColor>Token  {truncateMiddle(tradeConfirm.details.token, 52)}</Text>

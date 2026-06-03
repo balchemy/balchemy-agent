@@ -11,6 +11,8 @@
  * - A final flush is triggered synchronously on stop().
  */
 
+import { redactSecretLikeText } from '../utils/redaction';
+
 export type TelemetryEntryType = 'llm_call' | 'decision' | 'model_route';
 
 export interface LlmCallData {
@@ -138,7 +140,7 @@ export class TelemetryReporter {
       }
       this.lastFailureReason = '';
     } catch (error: unknown) {
-      this.lastFailureReason = error instanceof Error ? error.message : String(error);
+      this.lastFailureReason = redactSecretLikeText(error instanceof Error ? error.message : String(error));
       batch.attemptCount++;
       if (!this.retryQueue.some((item) => item.batchId === batch.batchId)) {
         this.retryQueue.unshift(batch);

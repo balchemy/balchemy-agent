@@ -95,55 +95,6 @@ export type AskBotArgs = {
   chat_id?: string;
 };
 
-export type TradeCommandArgs = {
-  message: string;
-  chat_id?: string;
-  recent_messages?: string[];
-  last_mentioned_ca?: string;
-};
-
-export type AgentExecuteArgs = {
-  instruction: string;
-  chat_id?: string;
-  metadata?: Record<string, unknown>;
-};
-
-export type AgentResearchArgs = {
-  query: string;
-  chain?: "solana" | "base" | "ethereum";
-  includeX?: boolean;
-  includeOnchain?: boolean;
-  includeDevWallets?: boolean;
-  includeHolders?: boolean;
-  maxPosts?: number;
-};
-
-export type AgentMarketDiscoveryArgs = {
-  query?: string;
-  chain?: "solana" | "base" | "ethereum";
-  signals?: Array<"launches" | "trending" | "social" | "liquidity">;
-  timeWindowMinutes?: number;
-  limit?: number;
-};
-
-export type AgentConfigArgs = {
-  operation: "get" | "update_trade_defaults" | "update_risk_policy";
-  defaults?: Record<string, unknown>;
-  policy?: Record<string, unknown>;
-};
-
-export type EvmQuoteArgs = {
-  chainId?: number;
-  sellToken: string;
-  buyToken: string;
-  sellAmount: string;
-  slippageBps?: number;
-};
-
-export type EvmSwapArgs = EvmQuoteArgs & {
-  submit?: boolean;
-};
-
 export type AgentSeedRequestArgs = {
   chainId?: number;
   walletAddress?: string;
@@ -428,93 +379,16 @@ export class BalchemyMcpClient {
     }
   }
 
-  // ── Typed convenience methods ───────────────────────────────────────────
+  // ── Safe convenience methods ────────────────────────────────────────────
 
   /** Natural language query via ask_bot. Use `chat_id` to maintain conversation continuity. */
   async askBot(args: AskBotArgs): Promise<McpCallToolResponse> {
     return this.callTool("ask_bot", args as unknown as Record<string, unknown>);
   }
 
-  /** Direct NLP trade command (regex parser, bypasses LLM). For structured trades, prefer `agentExecute()`. */
-  async tradeCommand(args: TradeCommandArgs): Promise<McpCallToolResponse> {
-    return this.callTool("trade_command", args as unknown as Record<string, unknown>);
-  }
-
-  /** High-level agent execution endpoint. Returns structured envelope with intent/result/metadata. Preferred over `tradeCommand()` for programmatic use. */
-  async agentExecute(args: AgentExecuteArgs): Promise<McpCallToolResponse> {
-    return this.callTool("agent_execute", args as unknown as Record<string, unknown>);
-  }
-
-  /** Broad read-only discovery for launches, trends, social buzz, and liquidity signals. */
-  async agentMarketDiscovery(args: AgentMarketDiscoveryArgs = {}): Promise<McpCallToolResponse> {
-    return this.callTool("agent_market_discovery", args as unknown as Record<string, unknown>);
-  }
-
-  /** High-level agent research endpoint. */
-  async agentResearch(args: AgentResearchArgs): Promise<McpCallToolResponse> {
-    return this.callTool("agent_research", args as unknown as Record<string, unknown>);
-  }
-
-  /** High-level portfolio/state snapshot endpoint. */
-  async agentPortfolio(): Promise<McpCallToolResponse> {
-    return this.callTool("agent_portfolio", {});
-  }
-
   /** High-level runtime/auth status endpoint. */
   async agentStatus(): Promise<McpCallToolResponse> {
     return this.callTool("agent_status", {});
-  }
-
-  /** High-level agent config endpoint (get/update). */
-  async agentConfig(args: AgentConfigArgs): Promise<McpCallToolResponse> {
-    return this.callTool("agent_config", args as unknown as Record<string, unknown>);
-  }
-
-  /** EVM swap quote (read-only). */
-  async evmQuote(args: EvmQuoteArgs): Promise<McpCallToolResponse> {
-    return this.callTool("trading_evm_quote", {
-      chainId: 8453,
-      ...args,
-    } as Record<string, unknown>);
-  }
-
-  /**
-   * EVM swap execution.
-   * By default `submit=false` (pending order) — pass `submit: true` to execute on-chain.
-   */
-  async evmSwap(args: EvmSwapArgs): Promise<McpCallToolResponse> {
-    return this.callTool("trading_evm_swap", {
-      chainId: 8453,
-      submit: false,
-      ...args,
-    } as Record<string, unknown>);
-  }
-
-  /** Solana Jupiter swap quote (read-only). Requires `MCP_EXPOSE_GRANULAR_TOOLS=true`. */
-  async solanaQuote(args: {
-    inputMint: string;
-    outputMint: string;
-    amount: string;
-    slippageBps?: number;
-  }): Promise<McpCallToolResponse> {
-    return this.callTool("trading_solana_jupiter_quote", args as unknown as Record<string, unknown>);
-  }
-
-  /**
-   * Solana Jupiter swap execution. Requires `MCP_EXPOSE_GRANULAR_TOOLS=true`.
-   * By default `submit=false` (pending order) — pass `submit: true` to execute on-chain.
-   */
-  async solanaSwap(args: {
-    inputMint: string;
-    outputMint: string;
-    amount: string;
-    slippageBps?: number;
-    submit?: boolean;
-  }): Promise<McpCallToolResponse> {
-    return this.callTool("trading_solana_jupiter_swap", {
-      submit: false,
-      ...args,
-    } as Record<string, unknown>);
   }
 
   /**

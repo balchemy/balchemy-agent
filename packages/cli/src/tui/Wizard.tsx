@@ -7,8 +7,8 @@ import { saveAgent } from "../agent-store.js";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { exec } from "node:child_process";
 import { truncateEnd } from "./text-layout.js";
+import { openBrowser } from "../browser.js";
 
 // ── Provider / Model definitions (shared with old wizard) ────────────────────
 
@@ -180,7 +180,7 @@ function generateYaml(p: ProviderDef, m: ModelDef, publicId: string, maxCost: nu
     `  timeout_ms: 15000`,
     ``,
     `strategy: custom`,
-    `shadow_mode: false`,
+    `shadow_mode: true`,
     ``,
     `behavior_rules:`,
     ``,
@@ -197,15 +197,6 @@ function generateDotEnv(endpoint: string, apiKey: string, llmApiKey: string, pub
     `LLM_API_KEY=${llmApiKey}`,
     ``,
   ].join("\n");
-}
-
-function openBrowser(url: string): void {
-  const cmd = process.platform === "darwin"
-    ? `open "${url}"`
-    : process.platform === "win32"
-      ? `start "${url}"`
-      : `xdg-open "${url}"`;
-  exec(cmd, () => {});
 }
 
 function maskValue(value: string, head = 8, tail = 4): string {
@@ -522,7 +513,7 @@ export function Wizard({ outDir, onComplete }: WizardProps): React.ReactElement 
       llmBaseUrl,
       maxDailyLlmCost: maxDailyCost,
       strategy: "custom",
-      shadowMode: false,
+      shadowMode: true,
       behaviorRules: {},
       wallets: {},
       createdAt: new Date().toISOString(),
@@ -542,7 +533,7 @@ export function Wizard({ outDir, onComplete }: WizardProps): React.ReactElement 
         maxDailyLlmCost: maxDailyCost,
         publicId,
         strategy: "custom",
-        shadowMode: false,
+        shadowMode: true,
         behaviorRules: {},
       });
     }, 800);
@@ -695,7 +686,7 @@ export function Wizard({ outDir, onComplete }: WizardProps): React.ReactElement 
               <Text dimColor>API Key  {maskValue(state.balchemyApiKey, 10, 4)}</Text>
             </Box>
             <Box marginTop={1}>
-              <Text color="cyan">Starting live cockpit...</Text>
+              <Text color="cyan">Starting agent cockpit...</Text>
             </Box>
           </Box>
         )}

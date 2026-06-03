@@ -307,8 +307,18 @@ export class AgentLoop {
         reasoning: decision.reasoning,
       });
 
-      // Execute via MCP (with client-side rule pre-check)
+      // Execute via MCP only when the caller explicitly opted out of shadow mode.
       if (decision.action === 'buy' || decision.action === 'sell') {
+        if (this.config.shadowMode !== false) {
+          this.config.onTradeResult?.({
+            action: decision.action,
+            token: decision.token,
+            amount: decision.amount,
+            response: 'Shadow mode: trade_command was not called.',
+          });
+          return;
+        }
+
         // --- Client-side BehaviorRule pre-check ---
         const tradeAmount = parseFloat(decision.amount ?? '0') || 0;
         this.resetHourlyCounterIfNeeded();
@@ -363,7 +373,7 @@ export class AgentLoop {
     }
 
     try {
-      const response = await this.mcp.agentPortfolio();
+      const response = await this.mcp.callTool('agent_portfolio', {});
       const parsed = parseToolJson<AgentPortfolioSnapshot>(response);
       const snapshot: AgentPortfolioSnapshot = parsed ?? {};
       this.portfolioCache = { snapshot, fetchedAt: now };

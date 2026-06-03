@@ -371,7 +371,7 @@ function printAgentList(commandName: string): void {
     const id = compactValue(agent.publicId, 20, 8);
     const endpoint = compactValue(agent.mcpEndpoint, 30, 10);
     const model = agent.llmModel ?? "default";
-    const mode = agent.shadowMode ? `${C.G}shadow${C.R}` : `${C.OK}LIVE${C.R}`;
+    const mode = agent.shadowMode ? `${C.G}shadow${C.R}` : `${C.OK}live-approved${C.R}`;
 
     reporter.write(`  ${marker} ${C.W}${id}${C.R}\n`);
     reporter.write(`    ${C.D}Endpoint${C.R}  ${endpoint}\n`);
@@ -407,7 +407,7 @@ function printAgentCurrent(): void {
     { label: "Host", value: endpointHost(active.mcpEndpoint) },
     { label: "Provider", value: active.llmProvider },
     { label: "Model", value: active.llmModel ?? "default" },
-    { label: "Mode", value: active.shadowMode ? "Shadow" : "LIVE" },
+    { label: "Mode", value: active.shadowMode ? "Shadow" : "Live-approved" },
     { label: "Saved", value: active.createdAt },
     { label: "Secrets", value: "stored encrypted locally, redacted in CLI output" },
   ]);
@@ -789,7 +789,7 @@ async function startFromConfig(): Promise<void> {
     llmTimeoutMs: config.llmTimeoutMs,
     publicId,
     strategy: "custom",
-    shadowMode: false,
+    shadowMode: config.shadowMode === false ? false : true,
     behaviorRules: config.behaviorRules,
     autoSeedSubscriptions: false,
   });
@@ -821,7 +821,7 @@ async function defaultLauncher(): Promise<void> {
     { label: "Host", value: endpointHost(last.mcpEndpoint) },
     { label: "Model", value: last.llmModel ?? "default" },
     { label: "Strategy", value: compactValue(last.strategy, 42, 8) },
-    { label: "Mode", value: last.shadowMode ? "Shadow" : "LIVE" },
+    { label: "Mode", value: last.shadowMode ? "Shadow" : "Live-approved" },
     { label: "Saved", value: last.createdAt },
   ]);
   const actions = [

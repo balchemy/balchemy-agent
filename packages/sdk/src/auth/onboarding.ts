@@ -62,6 +62,9 @@ export class AgentOnboardingClient {
       {
         jti: input.jti,
         ...(input.ttlSeconds !== undefined ? { ttlSeconds: input.ttlSeconds } : {}),
+      },
+      {
+        Authorization: `Bearer ${input.identityToken}`,
       }
     );
   }
@@ -73,6 +76,9 @@ export class AgentOnboardingClient {
       "/public/erc8004/onboarding/tokens/revoke-status",
       {
         jti: input.jti,
+      },
+      {
+        Authorization: `Bearer ${input.identityToken}`,
       }
     );
   }

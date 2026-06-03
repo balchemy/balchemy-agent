@@ -14,11 +14,11 @@
 import * as readline from "readline";
 import * as fs from "fs";
 import * as path from "path";
-import { exec } from "child_process";
 import { randomUUID } from "crypto";
 import { createRequire } from "module";
 import { renderLogo } from "./terminal-logo.js";
 import { saveAgent } from "./agent-store.js";
+import { openBrowser } from "./browser.js";
 
 const require = createRequire(import.meta.url);
 const CLI_VERSION = (require("../package.json") as { version?: string }).version ?? "unknown";
@@ -668,7 +668,7 @@ export async function runWizard(outDir: string): Promise<void> {
       ], "success");
 
       printInfo(`Full Balchemy API key will be written to ${path.join(outDir, ".env")} as BALCHEMY_API_KEY.`);
-      printInfo("The master key is created in chat setup after the first root/recovery wallet is bound; copy it when it appears because it is shown once.\n");
+      printInfo("The agent is provisioned but not wallet-bound yet. The chat setup binds the confirmed root/recovery wallet through the MCP key before approved execution can start.\n");
 
       printInfo("Next, the chat cockpit will guide setup: developer wallet, Solana/Base choice, trading wallets, slippage, hard limits and strategy.\n");
     } else {
@@ -706,7 +706,7 @@ export async function runWizard(outDir: string): Promise<void> {
     }
 
     const strategy = STRATEGIES.find((item) => item.name === "custom") ?? STRATEGIES[0];
-    const shadowMode = false;
+    const shadowMode = true;
     const behaviorRules: Record<string, unknown> = {};
 
     // ── Save & Launch ─────────────────────────────────────────────────────
@@ -773,7 +773,7 @@ export async function runWizard(outDir: string): Promise<void> {
       { label: "Agent", value: publicId },
       { label: "Provider", value: provider.label },
       { label: "Model", value: model.label },
-      { label: "Mode", value: "LIVE" },
+      { label: "Mode", value: shadowMode ? "Shadow" : "LIVE" },
     ], "success");
     printInfo("Starting the live cockpit...\n");
 
@@ -799,17 +799,6 @@ export async function runWizard(outDir: string): Promise<void> {
   } finally {
     rl.close();
   }
-}
-
-// ── Browser Helper ────────────────────────────────────────────────────────────
-
-function openBrowser(url: string): void {
-  const cmd = process.platform === "darwin"
-    ? `open "${url}"`
-    : process.platform === "win32"
-      ? `start "${url}"`
-      : `xdg-open "${url}"`;
-  exec(cmd, () => { /* ignore errors — non-critical */ });
 }
 
 // ── API Key Validation ────────────────────────────────────────────────────────

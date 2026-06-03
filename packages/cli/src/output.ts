@@ -26,6 +26,8 @@ const SECRET_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /\bsk-[A-Za-z0-9_-]{8,}\b/g, replacement: "[redacted]" },
   { pattern: /\bkey-[A-Za-z0-9_-]{8,}\b/g, replacement: "[redacted]" },
   { pattern: /\bbalc_[A-Za-z0-9_-]{8,}\b/g, replacement: "[redacted]" },
+  { pattern: /\b0x[a-fA-F0-9]{40}\b/g, replacement: "[redacted]" },
+  { pattern: /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, replacement: "[redacted]" },
   { pattern: /\b(Bearer\s+)[A-Za-z0-9._~-]+/gi, replacement: "$1[redacted]" },
   { pattern: /([?&](?:api_key|apikey|token|secret|key)=)[^\s&]+/gi, replacement: "$1[redacted]" },
 ];

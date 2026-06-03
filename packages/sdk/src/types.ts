@@ -90,11 +90,13 @@ export type RequestSiweNonceInput = {
 };
 
 export type RevokeIdentityTokenInput = {
+  identityToken: string;
   jti: string;
   ttlSeconds?: number;
 };
 
 export type IdentityTokenRevokeStatusInput = {
+  identityToken: string;
   jti: string;
 };
 

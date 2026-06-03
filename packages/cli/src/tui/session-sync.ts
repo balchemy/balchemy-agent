@@ -13,7 +13,7 @@ export function buildStrategyUpdateArgs(
   return {
     action: "configure_autonomous",
     naturalLanguageRules: strategy,
-    shadowMode,
+    shadowMode: shadowMode === false ? false : true,
   };
 }
 

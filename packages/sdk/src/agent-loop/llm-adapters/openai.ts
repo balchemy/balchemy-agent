@@ -1,4 +1,5 @@
 import type { LlmAdapter, LlmMessage, LlmResponse } from '../types';
+import { redactSecretLikeText } from '../../utils/redaction';
 
 export class OpenAiAdapter implements LlmAdapter {
   private readonly apiKey: string;
@@ -45,7 +46,7 @@ export class OpenAiAdapter implements LlmAdapter {
 
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(`OpenAI API error: ${response.status} ${text}`);
+        throw new Error(`OpenAI API error: ${response.status} ${redactSecretLikeText(text).slice(0, 240)}`);
       }
 
       const data = await response.json() as {

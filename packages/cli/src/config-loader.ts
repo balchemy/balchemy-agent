@@ -63,6 +63,17 @@ function optionalNumber(obj: unknown, defaultVal?: number): number | undefined {
   return defaultVal;
 }
 
+function optionalBoolean(obj: unknown, defaultVal?: boolean): boolean | undefined {
+  if (obj === undefined || obj === null) return defaultVal;
+  if (typeof obj === 'boolean') return obj;
+  if (typeof obj === 'string') {
+    const normalized = obj.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+  return defaultVal;
+}
+
 const VALID_SDK_PROVIDERS: LlmProvider[] = ['anthropic', 'openai', 'custom'];
 
 function parseLlmProvider(raw: unknown): LlmProvider {
@@ -127,6 +138,7 @@ export function loadConfig(configPath: string): AgentLoopConfig {
     typeof cfg.behavior_rules === 'object' && cfg.behavior_rules !== null
       ? (cfg.behavior_rules as Record<string, unknown>)
       : undefined;
+  const shadowMode = optionalBoolean(cfg.shadow_mode, true);
 
   return {
     mcpEndpoint,
@@ -141,5 +153,6 @@ export function loadConfig(configPath: string): AgentLoopConfig {
     webhookSecret,
     behaviorRulesPath,
     behaviorRules,
+    shadowMode,
   };
 }

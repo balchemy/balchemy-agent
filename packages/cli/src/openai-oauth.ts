@@ -13,7 +13,7 @@
 
 import * as http from "http";
 import * as crypto from "crypto";
-import { exec } from "child_process";
+import { openBrowser } from "./browser.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -45,18 +45,6 @@ function generateCodeChallenge(verifier: string): string {
 
 function generateState(): string {
   return crypto.randomBytes(16).toString("hex");
-}
-
-// ── Browser ───────────────────────────────────────────────────────────────────
-
-function openBrowser(url: string): void {
-  const cmd =
-    process.platform === "darwin"
-      ? `open "${url}"`
-      : process.platform === "win32"
-        ? `start "${url}"`
-        : `xdg-open "${url}"`;
-  exec(cmd, () => {});
 }
 
 // ── OAuth Flow ────────────────────────────────────────────────────────────────

@@ -38,12 +38,6 @@ export { AgentSdkError } from "./errors/agent-sdk-error";
 export { BalchemyMcpClient, connectMcp, getToolText, parseToolJson, isToolError } from "./mcp/mcp-client";
 export type {
   AskBotArgs,
-  TradeCommandArgs,
-  AgentExecuteArgs,
-  AgentResearchArgs,
-  AgentConfigArgs,
-  EvmQuoteArgs,
-  EvmSwapArgs,
   McpBatchToolCallInput,
   McpBatchToolCallResult,
   McpHealthResponse,
