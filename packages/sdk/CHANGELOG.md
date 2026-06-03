@@ -7,6 +7,18 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.3.4] — 2026-06-04
+
+### Fixed
+
+- Replace fragile prompt editing state with a tested editor reducer so Backspace, Delete, arrow navigation, Ctrl+A, and Ctrl+E work before raw terminal control-byte filtering.
+- Use terminal alternate-screen mode for the live cockpit so shell prompt artifacts do not appear as a second input area under the TUI.
+
+### Notes
+
+- No wallet keys, trading internals, or backend policy logic are shipped in the public packages.
+- Publish `@balchemyai/agent-sdk@0.3.4` before `balchemy@0.3.4` so the CLI dependency resolves from npm semver.
+
 ## [0.3.3] — 2026-06-04
 
 ### Fixed

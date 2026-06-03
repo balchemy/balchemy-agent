@@ -213,6 +213,25 @@ function TranscriptLine({ row, width }: { row: TranscriptRow; width: number }): 
 const THINKING_FRAMES = ["·  ", "·· ", "···", " ··", "  ·"];
 const CSI_FRAGMENT_PATTERN = /^(?:\[(?:5|6)(?:;\d+)?~?|\[(?:5|6)|(?:5|6)(?:;\d+)?~|\[\d*[A-Za-z~]|O[A-Za-z])$/;
 
+export interface PromptEditorState {
+  value: string;
+  cursorIndex: number;
+}
+
+export interface PromptInputKey {
+  return?: boolean;
+  backspace?: boolean;
+  delete?: boolean;
+  leftArrow?: boolean;
+  rightArrow?: boolean;
+  upArrow?: boolean;
+  downArrow?: boolean;
+  escape?: boolean;
+  tab?: boolean;
+  ctrl?: boolean;
+  meta?: boolean;
+}
+
 export function isTerminalControlInput(input: string): boolean {
   const value = input.replace(/[\r\n]/g, "");
   if (value.length === 0) return false;
@@ -221,6 +240,73 @@ export function isTerminalControlInput(input: string): boolean {
     if (code < 32 || (code >= 127 && code <= 159)) return true;
   }
   return CSI_FRAGMENT_PATTERN.test(value);
+}
+
+function isBackspaceInput(input: string): boolean {
+  return input === "\u0008" || input === "\u007f";
+}
+
+function isForwardDeleteInput(input: string): boolean {
+  const value = input.replace(/\u001b/g, "");
+  return value === "[3~" || value === "3~";
+}
+
+export function applyPromptEditorInput(
+  state: PromptEditorState,
+  input: string,
+  key: PromptInputKey,
+): PromptEditorState {
+  const chars = Array.from(state.value);
+  const cursor = Math.min(Math.max(0, state.cursorIndex), chars.length);
+
+  if (key.return) {
+    return { value: chars.join(""), cursorIndex: cursor };
+  }
+
+  if (key.backspace || isBackspaceInput(input)) {
+    if (cursor === 0) return { value: chars.join(""), cursorIndex: cursor };
+    chars.splice(cursor - 1, 1);
+    return { value: chars.join(""), cursorIndex: cursor - 1 };
+  }
+
+  if (key.delete || isForwardDeleteInput(input)) {
+    if (cursor >= chars.length) return { value: chars.join(""), cursorIndex: cursor };
+    chars.splice(cursor, 1);
+    return { value: chars.join(""), cursorIndex: cursor };
+  }
+
+  if (key.leftArrow) {
+    return { value: chars.join(""), cursorIndex: Math.max(0, cursor - 1) };
+  }
+
+  if (key.rightArrow) {
+    return { value: chars.join(""), cursorIndex: Math.min(chars.length, cursor + 1) };
+  }
+
+  if (input === "a" && key.ctrl) {
+    return { value: chars.join(""), cursorIndex: 0 };
+  }
+
+  if (input === "e" && key.ctrl) {
+    return { value: chars.join(""), cursorIndex: chars.length };
+  }
+
+  if (key.escape || key.tab || key.upArrow || key.downArrow || key.ctrl || key.meta) {
+    return { value: chars.join(""), cursorIndex: cursor };
+  }
+
+  if (isTerminalControlInput(input)) {
+    return { value: chars.join(""), cursorIndex: cursor };
+  }
+
+  const printable = input.replace(/[\r\n]/g, "");
+  if (printable.length === 0) {
+    return { value: chars.join(""), cursorIndex: cursor };
+  }
+
+  const inserted = Array.from(printable);
+  chars.splice(cursor, 0, ...inserted);
+  return { value: chars.join(""), cursorIndex: cursor + inserted.length };
 }
 
 function ThinkingIndicator({ width }: { width: number }): React.ReactElement {
@@ -265,8 +351,7 @@ export function ChatPanel({
   width,
   thinking = false,
 }: ChatPanelProps): React.ReactElement {
-  const [inputValue, setInputValue] = useState("");
-  const [cursorIndex, setCursorIndex] = useState(0);
+  const [promptState, setPromptState] = useState<PromptEditorState>({ value: "", cursorIndex: 0 });
   const [cursorVisible, setCursorVisible] = useState(true);
   const [scrollOffset, setScrollOffset] = useState(0);
   const prevRowCount = useRef(0);
@@ -287,6 +372,8 @@ export function ChatPanel({
     inputPlaceholder ?? "Ask, adjust rules, or inspect...",
     promptTextWidth,
   );
+  const inputValue = promptState.value;
+  const cursorIndex = promptState.cursorIndex;
   const promptViewport = getPromptViewport(inputValue, cursorIndex, promptTextWidth);
   const promptChars = Array.from(promptViewport.text);
   const promptBeforeCursor = promptChars.slice(0, promptViewport.cursorIndex).join("");
@@ -313,8 +400,7 @@ export function ChatPanel({
   const handleSubmit = useCallback(async () => {
     const value = inputValue.trim();
     if (!value) return;
-    setInputValue("");
-    setCursorIndex(0);
+    setPromptState({ value: "", cursorIndex: 0 });
     setScrollOffset(0);
     await onSend(value);
   }, [inputValue, onSend]);
@@ -333,66 +419,34 @@ export function ChatPanel({
 
     if (!inputActive || hideInput) return;
 
-    const now = Date.now();
-    const likelyControlFragment = now < suppressControlFragmentsUntil.current
-      && /^[\[\]0-9;~A-Za-zO]+$/.test(input.replace(/[\r\n]/g, ""));
-    if (isTerminalControlInput(input) || likelyControlFragment) {
-      return;
-    }
-
     if (key.return) {
       void handleSubmit();
       return;
     }
-    if (key.backspace || key.delete) {
-      const chars = Array.from(inputValue);
-      if (key.backspace && cursorIndex > 0) {
-        chars.splice(cursorIndex - 1, 1);
-        setInputValue(chars.join(""));
-        setCursorIndex(cursorIndex - 1);
-      } else if (key.delete && cursorIndex < chars.length) {
-        chars.splice(cursorIndex, 1);
-        setInputValue(chars.join(""));
-      }
+
+    const now = Date.now();
+    const likelyControlFragment = now < suppressControlFragmentsUntil.current
+      && /^[\[\]0-9;~A-Za-zO]+$/.test(input.replace(/[\r\n]/g, ""));
+    if (likelyControlFragment && !key.backspace && !key.delete && !key.leftArrow && !key.rightArrow) {
       return;
     }
-    if (key.leftArrow) {
-      suppressControlFragmentsUntil.current = Date.now() + 120;
-      setCursorIndex((prev) => Math.max(0, prev - 1));
-      return;
-    }
-    if (key.rightArrow) {
-      suppressControlFragmentsUntil.current = Date.now() + 120;
-      setCursorIndex((prev) => Math.min(Array.from(inputValue).length, prev + 1));
-      return;
-    }
-    if (input === "a" && key.ctrl) {
-      setCursorIndex(0);
-      return;
-    }
-    if (input === "e" && key.ctrl) {
-      setCursorIndex(Array.from(inputValue).length);
-      return;
-    }
+
     if (
       key.escape
       || key.tab
       || key.upArrow
       || key.downArrow
-      || key.ctrl
+      || (key.ctrl && input !== "a" && input !== "e")
     ) {
       suppressControlFragmentsUntil.current = Date.now() + 120;
       return;
     }
 
-    const printable = input.replace(/[\r\n]/g, "");
-    if (printable.length > 0) {
-      const chars = Array.from(inputValue);
-      const inserted = Array.from(printable);
-      chars.splice(cursorIndex, 0, ...inserted);
-      setInputValue(chars.join(""));
-      setCursorIndex(cursorIndex + inserted.length);
+    if (key.leftArrow || key.rightArrow) {
+      suppressControlFragmentsUntil.current = Date.now() + 120;
     }
+
+    setPromptState((prev) => applyPromptEditorInput(prev, input, key));
   });
 
   const hasOlder = viewport.start > 0;

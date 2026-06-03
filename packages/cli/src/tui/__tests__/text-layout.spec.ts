@@ -11,6 +11,7 @@ import {
   isSetupBypassReadOnlyMessage,
 } from "../AgentBridge.js";
 import {
+  applyPromptEditorInput,
   buildTranscriptRows,
   formatTranscriptPlainText,
   getPromptViewport,
@@ -107,6 +108,40 @@ test("prompt viewport keeps cursor visible for long input", () => {
   assert.ok(displayWidth(viewport.text) <= 16);
   assert.equal(viewport.cursorIndex, Array.from(viewport.text).length);
   assert.ok(viewport.text.includes("yapma"));
+});
+
+test("prompt editor handles backspace, delete and cursor movement before filtering control bytes", () => {
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "abc", cursorIndex: 3 }, "\u007f", {}),
+    { value: "ab", cursorIndex: 2 },
+  );
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "abc", cursorIndex: 1 }, "\u001b[3~", {}),
+    { value: "ac", cursorIndex: 1 },
+  );
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "abc", cursorIndex: 2 }, "", { leftArrow: true }),
+    { value: "abc", cursorIndex: 1 },
+  );
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "abc", cursorIndex: 1 }, "", { rightArrow: true }),
+    { value: "abc", cursorIndex: 2 },
+  );
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "abc", cursorIndex: 2 }, "Z", {}),
+    { value: "abZc", cursorIndex: 3 },
+  );
+});
+
+test("prompt editor supports ctrl-a and ctrl-e navigation", () => {
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "abcdef", cursorIndex: 3 }, "a", { ctrl: true }),
+    { value: "abcdef", cursorIndex: 0 },
+  );
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "abcdef", cursorIndex: 3 }, "e", { ctrl: true }),
+    { value: "abcdef", cursorIndex: 6 },
+  );
 });
 
 test("plain transcript export preserves content without panel borders", () => {
