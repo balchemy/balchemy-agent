@@ -1,5 +1,5 @@
 /**
- * AgentLoop — portfolio + rules fetch logic tests.
+ * AgentLoop — runtime status + rules fetch logic tests.
  *
  * Tests the private fetchPortfolio() and fetchBehaviorRules() methods
  * indirectly via processEvent(), using a jest-mocked BalchemyMcpClient.
@@ -74,18 +74,24 @@ describe('AgentLoop — fetch logic', () => {
       { uri: 'balchemy://behavior-rules/abc123', text: 'Max position: 5%' },
     ]);
     internals.mcp.callTool = jest.fn().mockImplementation(async (name: string) => {
-      if (name === 'agent_portfolio') {
-        return makeMcpToolResponse('{"totalValueSol":12.5,"summary":"Healthy portfolio"}');
+      if (name === 'agent_status') {
+        return makeMcpToolResponse('{"reply":"Agent status summary ready.","structured":{"trading_enabled":true,"trading_service_available":true}}');
       }
       return makeMcpToolResponse('ok');
     });
   });
 
   describe('fetchPortfolio()', () => {
-    it('parses portfolio response and returns snapshot', async () => {
+    it('parses runtime status response and returns snapshot', async () => {
       const snapshot = await internals.fetchPortfolio();
-      expect(snapshot).toEqual({ totalValueSol: 12.5, summary: 'Healthy portfolio' });
-      expect(internals.mcp.callTool).toHaveBeenCalledWith('agent_portfolio', {});
+      expect(snapshot).toEqual({
+        summary: 'Agent status summary ready.',
+        runtimeStatus: {
+          trading_enabled: true,
+          trading_service_available: true,
+        },
+      });
+      expect(internals.mcp.callTool).toHaveBeenCalledWith('agent_status', {});
     });
 
     it('caches result — second call within TTL skips MCP', async () => {
@@ -110,7 +116,7 @@ describe('AgentLoop — fetch logic', () => {
       const snapshot = await internals.fetchPortfolio();
       expect(snapshot).toEqual({});
       expect(errors).toHaveLength(1);
-      expect(errors[0].message).toContain('agent_portfolio fetch failed');
+      expect(errors[0].message).toContain('agent_status fetch failed');
     });
 
     it('returns empty snapshot when MCP returns invalid JSON', async () => {

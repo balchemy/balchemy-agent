@@ -33,6 +33,23 @@ interface RulesCache {
 const PORTFOLIO_TTL_MS = 30_000;    // 30 seconds
 const RULES_TTL_MS    = 5 * 60_000; // 5 minutes
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function buildRuntimeStatusSnapshot(parsed: Record<string, unknown>): AgentPortfolioSnapshot {
+  const structured = asRecord(parsed.structured) ?? parsed;
+  const reply = typeof parsed.reply === 'string' && parsed.reply.trim()
+    ? parsed.reply
+    : undefined;
+  return {
+    ...(reply ? { summary: reply } : {}),
+    runtimeStatus: structured,
+  };
+}
+
 export class AgentLoop {
   private readonly config: AgentLoopConfig;
   private readonly sseEndpoint: string;
@@ -362,7 +379,7 @@ export class AgentLoop {
   }
 
   /**
-   * Fetch the agent portfolio via `agent_portfolio` MCP tool.
+   * Fetch exposed runtime status via `agent_status`.
    * Result is cached for 30 seconds. On failure, returns an empty snapshot
    * so the decision loop continues with degraded context.
    */
@@ -373,15 +390,17 @@ export class AgentLoop {
     }
 
     try {
-      const response = await this.mcp.callTool('agent_portfolio', {});
-      const parsed = parseToolJson<AgentPortfolioSnapshot>(response);
-      const snapshot: AgentPortfolioSnapshot = parsed ?? {};
+      const response = await this.mcp.agentStatus();
+      const parsed = parseToolJson<Record<string, unknown>>(response);
+      const snapshot: AgentPortfolioSnapshot = parsed
+        ? buildRuntimeStatusSnapshot(parsed)
+        : {};
       this.portfolioCache = { snapshot, fetchedAt: now };
       return snapshot;
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       // Graceful degradation: continue with empty snapshot.
-      this.config.onError?.(new Error(`agent_portfolio fetch failed: ${msg}; continuing with empty snapshot`));
+      this.config.onError?.(new Error(`agent_status fetch failed: ${msg}; continuing with empty snapshot`));
       return {};
     }
   }

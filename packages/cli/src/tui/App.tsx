@@ -214,7 +214,7 @@ export function App({ config }: AppProps): React.ReactElement {
       bridge.refreshBalance().catch(() => {});
     }, 60_000);
 
-    // Background update checker — every 10 minutes
+    // Background runtime status refresh.
     return () => {
       clearInterval(balanceInterval);
       bridge.stop().catch(() => {});

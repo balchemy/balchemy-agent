@@ -77,7 +77,7 @@ export interface AgentLoopConfig {
   onTradeResult?: (result: { action: string; token?: string; amount?: string; response: string }) => void;
 }
 
-/** Lightweight portfolio snapshot returned by agent_portfolio MCP tool. */
+/** Lightweight runtime snapshot returned by the exposed agent_status MCP tool. */
 export interface AgentPortfolioSnapshot {
   /** Total portfolio value in SOL */
   totalValueSol?: number;

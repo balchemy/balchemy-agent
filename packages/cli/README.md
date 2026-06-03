@@ -126,20 +126,15 @@ source, logs, screenshots, and prompts.
 
 ## MCP Tools
 
-The CLI connects agents to the curated agent-facing MCP surface.
+The CLI uses the curated agent-facing MCP surface returned by `tools/list`.
+Availability depends on MCP key scope and backend policy.
 
-| Tool | Purpose |
-| --- | --- |
-| `trade_command` | Buy, sell, or swap through the approved execution path |
-| `ask_bot` | Natural language market query support |
-| `agent_research` | Token and market research |
-| `agent_portfolio` | Portfolio, positions, and PnL |
-| `configure_behavior_rules` | Trading constraints in natural language |
-| `get_behavior_rules` | Current active rules |
-| `create_subscription` | Market event subscription |
-| `setup_agent` | Onboarding and runtime setup |
+Typical capabilities include chat/research through `ask_bot`, runtime status
+through `agent_status`, walletless setup through `setup_agent`, behavior-rule
+management, market-event subscriptions, and approved trade commands.
 
-Granular internal tools stay hidden unless the platform enables them for a bot.
+Raw/internal direct research, broad discovery, and portfolio snapshot tools stay
+hidden unless they are returned by `tools/list` for that bot.
 
 ## LLM Providers
 

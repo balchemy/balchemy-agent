@@ -700,7 +700,7 @@ export class AgentBridge {
     }
 
     try {
-      const prompt = "Check my portfolio and status, then greet me. Tell me my balance, wallets, and current strategy. Keep it brief and do not narrate tool calls.";
+      const prompt = "Check my runtime status and known wallets, then greet me. If live balances are unavailable through the listed MCP tools, say that briefly. Keep it brief and do not narrate tool calls.";
       const reply = await this.chatAgent.chat(
         this.withRuntimeContext(prompt),
         (name, result) => {
@@ -1314,7 +1314,7 @@ ${walletLines.join("\n")}
           return;
         }
         this.setupFlow = null;
-        this.addAgentMessage("Setup is complete. I am starting the agent loop and checking the portfolio now.");
+        this.addAgentMessage("Setup is complete. I am starting the agent loop and refreshing runtime status now.");
         await this.tryStartLoop();
       }
     } catch (err: unknown) {
@@ -1362,7 +1362,37 @@ ${walletLines.join("\n")}
 
     if (name === "agent_portfolio") {
       this.applyPortfolioSnapshot(parsed);
+      return;
     }
+
+    if (name === "agent_status") {
+      this.applyAgentStatusSnapshot(parsed);
+    }
+  }
+
+  private applyAgentStatusSnapshot(parsed: Record<string, unknown>): void {
+    const structured = asRecord(parsed.structured) ?? parsed;
+    const tradingEnabled = structured.trading_enabled;
+    const tradingServiceAvailable = structured.trading_service_available;
+
+    this.setters.setStatus((prev) => {
+      let status = prev.status;
+      if (tradingServiceAvailable === false) {
+        status = "trading-unavailable";
+      } else if (tradingEnabled === false && !status.startsWith("setup")) {
+        status = "trading-disabled";
+      } else if (
+        tradingEnabled === true
+        && (status === "connecting" || status === "trading-unavailable" || status === "trading-disabled")
+      ) {
+        status = prev.sseConnected ? "running" : "ready";
+      }
+
+      return {
+        ...prev,
+        status,
+      };
+    });
   }
 
   private applyPortfolioSnapshot(parsed: Record<string, unknown>): void {
@@ -1530,42 +1560,20 @@ ${walletLines.join("\n")}
     return isSetupReady(status);
   }
 
-  /** Silent balance refresh — updates status panel only, no chat messages. */
+  /** Silent runtime refresh — updates status panel only, no chat messages. */
   async refreshBalance(): Promise<void> {
     try {
-      const response = await this.mcp.callTool("agent_portfolio", {});
+      const response = await this.mcp.agentStatus();
       const text = response.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
       const parsed = parseJsonObject(text);
-      if (parsed) this.applyPortfolioSnapshot(parsed);
+      if (parsed) this.applyToolResult("agent_status", text);
     } catch (_error: unknown) {
       // Silent — don't spam chat
     }
   }
 
   async checkBalance(): Promise<void> {
-    try {
-      const response = await this.mcp.callTool("agent_portfolio", {});
-      const text = response.content?.find((c: { type: string; text?: string }) => c.type === "text")?.text ?? "{}";
-      const parsed = parseJsonObject(text);
-      const snapshot = parsed
-        ? asRecord(asRecord(parsed.structured)?.snapshot) ?? asRecord(parsed.snapshot) ?? asRecord(parsed.portfolio) ?? parsed
-        : {};
-      const data = asRecord(snapshot.data);
-      const sol = firstNumber(snapshot, ["totalValueSol", "portfolioValueSol", "portfolio_value_sol", "total_value_sol"])
-        ?? (data ? firstNumber(data, ["totalValueSol", "portfolioValueSol", "portfolio_value_sol", "total_value_sol"]) : undefined)
-        ?? (data ? sumWalletBalances(data).balanceSol : sumWalletBalances(snapshot).balanceSol)
-        ?? 0;
-      if (parsed) this.applyPortfolioSnapshot(parsed);
-      if (sol < 0.01 && !this.lowBalanceWarned) {
-        this.lowBalanceWarned = true;
-        this.addErrorMessage(`Wallet balance looks low (${sol} SOL). Fund the selected trading wallet before approved execution.`);
-      }
-      if (sol >= 0.01) {
-        this.lowBalanceWarned = false;
-      }
-    } catch (_error: unknown) {
-      this.addErrorMessage("Could not check wallet balance.");
-    }
+    await this.refreshBalance();
   }
 
   // ── Settings helpers (for /settings menu) ─────────────────────────────────

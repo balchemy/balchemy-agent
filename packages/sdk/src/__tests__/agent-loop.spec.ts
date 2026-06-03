@@ -64,7 +64,7 @@ describe('AgentLoop', () => {
     (loop as unknown as { mcp: { callTool: jest.Mock; readResource: jest.Mock } }).mcp.callTool = jest
       .fn()
       .mockImplementation(async (name: string) => {
-        if (name === 'agent_portfolio') return { content: [{ type: 'text', text: '{}' }] };
+        if (name === 'agent_status') return { content: [{ type: 'text', text: '{}' }] };
         return { content: [{ type: 'text', text: 'executed' }] };
       });
     (loop as unknown as { mcp: { readResource: jest.Mock } }).mcp.readResource = jest

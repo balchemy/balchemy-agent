@@ -7,6 +7,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.2.10] — 2026-06-03
+
+### Changed
+
+- Stop the SDK agent loop from calling the hidden `agent_portfolio` MCP tool; it now uses the default-exposed `agent_status` surface for runtime context.
+- Stop the CLI status refresh from polling hidden portfolio tools and clarify the README tool table to match `tools/list`.
+- Keep CLI prompts aligned with advertised MCP tools so the external LLM does not invent hidden tool names.
+
+### Notes
+
+- No wallet keys, trading internals, or backend policy logic are shipped in the public packages.
+- Publish `@balchemyai/agent-sdk@0.2.10` before `balchemy@0.2.10` so the CLI dependency resolves from npm semver.
+
 ## [0.2.9] — 2026-06-03
 
 ### Changed

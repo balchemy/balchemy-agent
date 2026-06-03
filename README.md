@@ -85,18 +85,16 @@ See [`packages/sdk/README.md`](packages/sdk/README.md) and [`packages/sdk/docs/Q
 
 ## Agent-Facing MCP Tools
 
-| Tool | Purpose |
-| --- | --- |
-| `trade_command` | Buy, sell, or swap through the approved execution path |
-| `ask_bot` | Natural-language market query support |
-| `agent_research` | Token and market research |
-| `agent_portfolio` | Portfolio, positions, and PnL |
-| `configure_behavior_rules` | Trading constraints in natural language |
-| `get_behavior_rules` | Current active rules |
-| `create_subscription` | Market event subscription |
-| `setup_agent` | Onboarding and runtime setup |
+The runtime `tools/list` response is the source of truth for the current agent's
+MCP surface. Availability depends on key scope and backend policy.
 
-Granular internal tools stay behind the platform boundary. The public SDK and CLI do not contain backend trading internals, private endpoints, privileged workflows, or secrets.
+Typical capabilities include chat/research, runtime status, walletless setup,
+behavior-rule management, subscriptions, and approved trade commands. Raw direct
+research, broad discovery, and portfolio snapshots stay behind the platform
+boundary unless they are explicitly returned by `tools/list`.
+
+The public SDK and CLI do not contain backend trading internals, private
+endpoints, privileged workflows, or secrets.
 
 ## Safety Model
 

@@ -116,13 +116,13 @@ scope, replay/rate protection, and the approved product flow.
 
 | Scope | Access |
 | --- | --- |
-| `read` | Market data, portfolio views, research, status |
+| `read` | Runtime-advertised market data, status, and read-only query tools |
 | `trade` | Read tools plus trade execution tools |
 
 The default MCP endpoint exposes a curated agent-facing surface for chat,
-execution, setup, behavior rules, portfolio/status, and subscriptions. Granular
-internal tools stay hidden unless the platform flag
-`MCP_EXPOSE_GRANULAR_TOOLS=true` is enabled for the bot.
+execution, setup, behavior rules, runtime status, and subscriptions. Raw
+research, discovery, and portfolio snapshot tools stay hidden unless they are
+returned by `tools/list` for that bot.
 
 ## Errors
 
