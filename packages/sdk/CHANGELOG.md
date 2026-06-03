@@ -7,6 +7,18 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.3.2] — 2026-06-03
+
+### Fixed
+
+- Let read-only runtime, rules, context, portfolio, market, and risk prompts bypass the in-chat setup wizard when setup is incomplete.
+- Stop setup prompts after setup/manage-scope failures instead of looping on the same wallet confirmation question.
+
+### Notes
+
+- No wallet keys, trading internals, or backend policy logic are shipped in the public packages.
+- Publish `@balchemyai/agent-sdk@0.3.2` before `balchemy@0.3.2` so the CLI dependency resolves from npm semver.
+
 ## [0.3.1] — 2026-06-03
 
 ### Changed

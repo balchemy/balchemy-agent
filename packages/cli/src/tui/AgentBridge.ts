@@ -32,6 +32,21 @@ function isMcpScopeError(error: unknown): boolean {
   return /insufficient(?:\s|_)+mcp(?:\s|_)+key(?:\s|_)+scope|insufficient(?:\s|_)+scope|\b403\b/i.test(raw);
 }
 
+export function isSetupBypassReadOnlyMessage(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return false;
+
+  const deniesSideEffects =
+    /\b(do not|don't|no|without|never|sadece|yaln[ıi]zca|trade yapma|execute etme|de[ğg]i[şs]tirme|alma|satma|swap yapma)\b/i.test(normalized);
+  const readOnlyIntent =
+    /\b(status|runtime|mode|armed|paused|kural|kurallar|rules|behavior|davran[ıi][şs]|context|snapshot|portf[öo]y|portfolio|position|pozisyon|pending|order|brief|market|risk|degraded|unavailable|g[öo]ster|[öo]zetle|oku)\b/i.test(normalized);
+
+  return readOnlyIntent && (
+    deniesSideEffects
+    || /\b(status|runtime|mode|armed|paused|rules|kurallar|context snapshot|agent context|portf[öo]y|portfolio|pending order)\b/i.test(normalized)
+  );
+}
+
 function truncateError(raw: string): string {
   // Extract HTTP status code if present
   const statusMatch = raw.match(/\b(4\d{2}|5\d{2})\b/);
@@ -747,6 +762,11 @@ export class AgentBridge {
     });
 
     if (this.setupFlow) {
+      if (isSetupBypassReadOnlyMessage(text)) {
+        await this.sendChatMessage(text);
+        return;
+      }
+
       this.setters.setThinking(true);
       try {
         await this.handleSetupInput(text);
@@ -756,6 +776,10 @@ export class AgentBridge {
       return;
     }
 
+    await this.sendChatMessage(text);
+  }
+
+  private async sendChatMessage(text: string): Promise<void> {
     if (!this.chatAgent) return;
     this.setters.setThinking(true);
     try {
@@ -1319,6 +1343,21 @@ ${walletLines.join("\n")}
       }
     } catch (err: unknown) {
       this.addErrorMessage(`Setup failed: ${friendlyError(err).replace(/^LLM error: /, "")}`);
+      if (isMcpScopeError(err)) {
+        this.setupStatusUnavailableForScope = true;
+        this.setupFlow = null;
+        if (this.setupPollTimer) {
+          clearInterval(this.setupPollTimer);
+          this.setupPollTimer = null;
+        }
+        this.setters.setStatus((prev) => ({
+          ...prev,
+          sseConnected: false,
+          status: "setup-scope-required",
+        }));
+        this.addAgentMessage("This MCP key cannot finish setup because it lacks setup/manage scope. I stopped setup prompts for this session. You can still ask read-only runtime/status/rules questions, or switch to a setup/manage-scope key to continue onboarding.");
+        return;
+      }
       this.addAgentMessage(`${this.setupPromptFor(this.setupFlow?.step ?? flow.step)} Try again.`);
     }
   }

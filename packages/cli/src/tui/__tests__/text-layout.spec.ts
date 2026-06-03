@@ -7,6 +7,9 @@ import {
   wrapText,
 } from "../text-layout.js";
 import {
+  isSetupBypassReadOnlyMessage,
+} from "../AgentBridge.js";
+import {
   buildTranscriptRows,
   formatTranscriptPlainText,
   getPromptViewport,
@@ -155,4 +158,22 @@ test("transcript viewport scrolls by rendered rows", () => {
   assert.equal(older.visibleRows.length, 4);
   assert.ok(older.end < bottom.end);
   assert.ok(older.scrollOffset > 0);
+});
+
+test("read-only runtime prompts bypass setup wizard input handling", () => {
+  assert.equal(
+    isSetupBypassReadOnlyMessage("Runtime durumumu göster. Mode, armed ve paused bilgisini söyle. Trade yapma."),
+    true,
+  );
+  assert.equal(
+    isSetupBypassReadOnlyMessage("Mevcut davranış kurallarımı özetle. Sadece oku, değiştirme."),
+    true,
+  );
+  assert.equal(
+    isSetupBypassReadOnlyMessage("Agent context snapshot çıkar. Portföy, açık pozisyon ve pending order varsa göster."),
+    true,
+  );
+  assert.equal(isSetupBypassReadOnlyMessage("both"), false);
+  assert.equal(isSetupBypassReadOnlyMessage("0x16ad3a6F473Ba57Cd944d461E48a327802b63bFa"), false);
+  assert.equal(isSetupBypassReadOnlyMessage("3%"), false);
 });
