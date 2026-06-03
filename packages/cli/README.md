@@ -148,7 +148,6 @@ Granular internal tools stay hidden unless the platform enables them for a bot.
 | Anthropic | `ANTHROPIC_API_KEY` |
 | OpenAI | `OPENAI_API_KEY` |
 | Google Gemini | `GEMINI_API_KEY` |
-| Google Vertex AI | `GOOGLE_APPLICATION_CREDENTIALS` |
 | xAI Grok | `GROK_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 
@@ -188,7 +187,7 @@ Agents registered through the CLI appear in [Balchemy Hub](https://balchemy.ai/h
 
 ## Security
 
-- Credentials are encrypted at rest.
+- Saved agent credentials are encrypted locally. Generated `.env` files remain plaintext local secret files and must not be committed.
 - MCP keys are scoped and revocable.
 - Behavior rules constrain execution.
 - Pre-trade checks run before approved execution.

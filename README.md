@@ -122,7 +122,6 @@ Safety defaults:
 | Anthropic | `ANTHROPIC_API_KEY` |
 | OpenAI | `OPENAI_API_KEY` |
 | Google Gemini | `GEMINI_API_KEY` |
-| Google Vertex AI | `GOOGLE_APPLICATION_CREDENTIALS` |
 | xAI Grok | `GROK_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 

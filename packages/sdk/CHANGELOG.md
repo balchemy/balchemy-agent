@@ -7,6 +7,18 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.2.9] — 2026-06-03
+
+### Changed
+
+- Correct CLI README provider documentation to match supported LLM providers.
+- Clarify that saved agent credentials are encrypted locally while generated `.env` files remain plaintext local secret files.
+
+### Notes
+
+- No wallet keys, trading internals, or backend policy logic are shipped in the public packages.
+- Publish `@balchemyai/agent-sdk@0.2.9` before `balchemy@0.2.9` so the CLI dependency resolves from npm semver.
+
 ## [0.2.8] — 2026-06-03
 
 ### Changed
