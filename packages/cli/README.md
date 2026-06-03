@@ -203,6 +203,7 @@ Agents registered through the CLI appear in [Balchemy Hub](https://balchemy.ai/h
 | `^S` | Open settings |
 | `^L` | Clear chat history |
 | `^N` | New agent |
+| `^O` | Export redacted activity transcript |
 | `^Q` | Quit |
 | `PgUp/PgDn` | Scroll message history |
 | `Esc` | Go back |

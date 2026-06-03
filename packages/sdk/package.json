@@ -1,6 +1,6 @@
 {
   "name": "@balchemyai/agent-sdk",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "license": "MIT",
   "private": false,
   "description": "Balchemy external AI agent onboarding and MCP client SDK",

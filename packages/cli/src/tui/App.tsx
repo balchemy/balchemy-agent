@@ -2,7 +2,10 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { Select, TextInput } from "@inkjs/ui";
-import { ChatPanel } from "./ChatPanel.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { ChatPanel, formatTranscriptPlainText } from "./ChatPanel.js";
 import { StatusPanel } from "./StatusPanel.js";
 import { SecretInput } from "./SecretInput.js";
 import { AgentBridge } from "./AgentBridge.js";
@@ -18,6 +21,7 @@ import {
   persistStrategyAndBuildRestartConfig,
   toTuiConfig,
 } from "./session-sync.js";
+import { redactSecrets } from "../output.js";
 import { truncateEnd, truncateMiddle } from "./text-layout.js";
 import { resolveProviderLabel } from "./utils.js";
 
@@ -165,6 +169,24 @@ export function App({ config }: AppProps): React.ReactElement {
     addMessage({ id: randomUUID(), type: "error", text, timestamp: Date.now() });
   }, [addMessage]);
 
+  const exportActivityLog = useCallback(() => {
+    if (messages.length === 0) {
+      addSystemMsg("No activity to export.");
+      return;
+    }
+
+    try {
+      const outDir = path.join(os.homedir(), ".balchemy");
+      fs.mkdirSync(outDir, { recursive: true, mode: 0o700 });
+      const outPath = path.join(outDir, "activity-latest.txt");
+      const body = redactSecrets(formatTranscriptPlainText(messages));
+      fs.writeFileSync(outPath, `${body}\n`, { encoding: "utf8", mode: 0o600 });
+      addSystemMsg(`Activity exported to ${outPath}`);
+    } catch (error: unknown) {
+      addErrorMsg(`Activity export failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }, [messages, addSystemMsg, addErrorMsg]);
+
   // Trade confirmation callback
   const confirmTrade = useCallback((details: TradeConfirmationDetails): Promise<boolean> => {
     return new Promise((resolve) => {
@@ -274,6 +296,10 @@ export function App({ config }: AppProps): React.ReactElement {
     if (input === "l" && key.ctrl) {
       setMessages([]);
       addSystemMsg("Chat cleared.");
+      return;
+    }
+    if (input === "o" && key.ctrl) {
+      exportActivityLog();
       return;
     }
     if (input === "n" && key.ctrl) {
@@ -553,8 +579,8 @@ export function App({ config }: AppProps): React.ReactElement {
   );
   const shortcutLine = truncateEnd(
     `${compactLayout
-      ? "^S settings  ^F focus  ? help  ^L clear  ^Q quit  PgUp/PgDn transcript"
-      : "^S settings  ^F activity focus  ? help  ^L clear  ^N new  ^Q quit  PgUp/PgDn transcript"}${overlayVisible ? "  ESC back" : ""}`,
+      ? "^S settings  ^F focus  ^O export  ? help  ^L clear  ^Q quit  PgUp/PgDn transcript"
+      : "^S settings  ^F activity focus  ^O export  ? help  ^L clear  ^N new  ^Q quit  PgUp/PgDn transcript"}${overlayVisible ? "  ESC back" : ""}`,
     overlayContentWidth,
   );
 
@@ -637,6 +663,7 @@ export function App({ config }: AppProps): React.ReactElement {
           <KeyHelpRow keys="Ctrl+L" label="Clear visible chat activity without changing agent state." width={overlayContentWidth} />
           {!compactLayout && <KeyHelpRow keys="Ctrl+N" label="Return to launcher and choose or create another saved agent." width={overlayContentWidth} />}
           <KeyHelpRow keys="Ctrl+F" label="Toggle Activity focus so mouse selection only covers the transcript panel." width={overlayContentWidth} />
+          <KeyHelpRow keys="Ctrl+O" label="Export a redacted plain-text transcript to ~/.balchemy/activity-latest.txt." width={overlayContentWidth} />
           <KeyHelpRow keys="PgUp/PgDn" label="Scroll the transcript by rendered rows while keeping the prompt clean." width={overlayContentWidth} />
           <KeyHelpRow keys="Esc / ?" label="Close this panel; trade prompts only execute when you type TRADE." width={overlayContentWidth} />
         </Box>

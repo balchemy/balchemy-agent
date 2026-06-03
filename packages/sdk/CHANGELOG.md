@@ -7,6 +7,21 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.3.1] — 2026-06-03
+
+### Changed
+
+- Keep safe read wrapper tools visible for agents with stale MCP allowlists while raw/internal agent tools remain hidden.
+- Improve CLI cockpit input handling for PageUp/PageDown, arrow navigation, long prompts, and visible cursor placement.
+- Add a redacted plain-text activity transcript export from the cockpit.
+- Prefer safe context, market brief, candidate, and risk tools in CLI chat prompts when the backend advertises them.
+- Stop vague retry suggestions when market or risk data is unavailable, degraded, rate limited, or unsupported.
+
+### Notes
+
+- No wallet keys, trading internals, or backend policy logic are shipped in the public packages.
+- Publish `@balchemyai/agent-sdk@0.3.1` before `balchemy@0.3.1` so the CLI dependency resolves from npm semver.
+
 ## [0.3.0] — 2026-06-03
 
 ### Changed

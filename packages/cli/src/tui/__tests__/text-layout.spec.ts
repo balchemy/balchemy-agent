@@ -8,6 +8,8 @@ import {
 } from "../text-layout.js";
 import {
   buildTranscriptRows,
+  formatTranscriptPlainText,
+  getPromptViewport,
   getTranscriptViewport,
   isTerminalControlInput,
 } from "../ChatPanel.js";
@@ -84,13 +86,53 @@ test("transcript rows preserve long primary chat text without activity trim mark
 });
 
 test("terminal control input detection filters paging escape fragments", () => {
-  for (const input of ["[5~", "[6~", "[5~", "[6~", "5~", "6~", "OA"]) {
+  for (const input of ["[5~", "[6~", "[5~", "[6~", "[5", "[6", "5~", "6~", "OA"]) {
     assert.equal(isTerminalControlInput(input), true);
   }
 
   for (const input of ["buy SOL", "what can you do?", ">"]) {
     assert.equal(isTerminalControlInput(input), false);
   }
+});
+
+test("prompt viewport keeps cursor visible for long input", () => {
+  const value = "Solana yeni pair adaylarını tara ama trade yapma";
+  const cursor = value.length;
+  const viewport = getPromptViewport(value, cursor, 16);
+
+  assert.ok(displayWidth(viewport.text) <= 16);
+  assert.equal(viewport.cursorIndex, Array.from(viewport.text).length);
+  assert.ok(viewport.text.includes("yapma"));
+});
+
+test("plain transcript export preserves content without panel borders", () => {
+  const transcript = formatTranscriptPlainText([
+    {
+      id: "msg-1",
+      type: "user",
+      text: "Runtime durumumu göster.",
+      timestamp: Date.parse("2026-02-11T00:00:00.000Z"),
+    },
+    {
+      id: "msg-2",
+      type: "system",
+      text: "Tool: agent_status",
+      timestamp: Date.parse("2026-02-11T00:01:00.000Z"),
+    },
+    {
+      id: "msg-3",
+      type: "agent",
+      text: "Mode: shadow\nArmed: false",
+      timestamp: Date.parse("2026-02-11T00:02:00.000Z"),
+    },
+  ]);
+
+  assert.match(transcript, /YOU/);
+  assert.match(transcript, /TOOL/);
+  assert.match(transcript, /agent_status/);
+  assert.match(transcript, /Mode: shadow/);
+  assert.equal(transcript.includes("╭"), false);
+  assert.equal(transcript.includes("│"), false);
 });
 
 test("transcript viewport scrolls by rendered rows", () => {

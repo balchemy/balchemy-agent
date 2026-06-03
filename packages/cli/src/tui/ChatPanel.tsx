@@ -139,6 +139,50 @@ export function getTranscriptViewport(
   };
 }
 
+export function formatTranscriptPlainText(messages: ChatMessage[]): string {
+  return messages
+    .map((msg) => {
+      if (msg.type === "system") {
+        const meta = getSystemMeta(msg.text);
+        return `${meta.label}  ${formatTime(msg.timestamp)}\n${meta.body}`;
+      }
+
+      const style = messageStyle(msg);
+      const label = style.label;
+      const body = msg.text;
+      return `${label}  ${formatTime(msg.timestamp)}\n${body}`;
+    })
+    .join("\n\n");
+}
+
+export function getPromptViewport(
+  value: string,
+  cursorIndex: number,
+  maxWidth: number,
+): { text: string; cursorIndex: number } {
+  const chars = Array.from(value);
+  const cursor = Math.min(Math.max(0, cursorIndex), chars.length);
+  const width = Math.max(1, maxWidth);
+  let start = Math.max(0, cursor - width + 1);
+  let end = Math.min(chars.length, start + width);
+
+  while (cursor > end) {
+    start += 1;
+    end += 1;
+  }
+  while (displayWidth(chars.slice(start, end).join("")) > width && start < cursor) {
+    start += 1;
+  }
+  while (displayWidth(chars.slice(start, end).join("")) > width && end > cursor) {
+    end -= 1;
+  }
+
+  return {
+    text: chars.slice(start, end).join(""),
+    cursorIndex: cursor - start,
+  };
+}
+
 function TranscriptLine({ row, width }: { row: TranscriptRow; width: number }): React.ReactElement {
   if (row.kind === "system") {
     return (
@@ -167,7 +211,7 @@ function TranscriptLine({ row, width }: { row: TranscriptRow; width: number }): 
 }
 
 const THINKING_FRAMES = ["·  ", "·· ", "···", " ··", "  ·"];
-const CSI_FRAGMENT_PATTERN = /^(?:\[(?:5|6)(?:;\d+)?~|(?:5|6)(?:;\d+)?~|\[\d*[A-Za-z~]|O[A-Za-z])$/;
+const CSI_FRAGMENT_PATTERN = /^(?:\[(?:5|6)(?:;\d+)?~?|\[(?:5|6)|(?:5|6)(?:;\d+)?~|\[\d*[A-Za-z~]|O[A-Za-z])$/;
 
 export function isTerminalControlInput(input: string): boolean {
   const value = input.replace(/[\r\n]/g, "");
@@ -222,8 +266,11 @@ export function ChatPanel({
   thinking = false,
 }: ChatPanelProps): React.ReactElement {
   const [inputValue, setInputValue] = useState("");
+  const [cursorIndex, setCursorIndex] = useState(0);
+  const [cursorVisible, setCursorVisible] = useState(true);
   const [scrollOffset, setScrollOffset] = useState(0);
   const prevRowCount = useRef(0);
+  const suppressControlFragmentsUntil = useRef(0);
   const panelWidth = Math.max(18, width);
   const historyWidth = Math.max(8, panelWidth - 2);
   const messageWidth = Math.max(8, historyWidth);
@@ -240,9 +287,17 @@ export function ChatPanel({
     inputPlaceholder ?? "Ask, adjust rules, or inspect...",
     promptTextWidth,
   );
-  const visibleInput = inputValue.length > 0
-    ? truncateEnd(inputValue, promptTextWidth)
-    : placeholder;
+  const promptViewport = getPromptViewport(inputValue, cursorIndex, promptTextWidth);
+  const promptChars = Array.from(promptViewport.text);
+  const promptBeforeCursor = promptChars.slice(0, promptViewport.cursorIndex).join("");
+  const promptAfterCursor = promptChars.slice(promptViewport.cursorIndex).join("");
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCursorVisible((visible) => !visible);
+    }, 530);
+    return () => clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     const previous = prevRowCount.current;
@@ -259,28 +314,64 @@ export function ChatPanel({
     const value = inputValue.trim();
     if (!value) return;
     setInputValue("");
+    setCursorIndex(0);
     setScrollOffset(0);
     await onSend(value);
   }, [inputValue, onSend]);
 
   useInput((input, key) => {
     if (key.pageUp) {
+      suppressControlFragmentsUntil.current = Date.now() + 120;
       setScrollOffset((prev) => Math.min(prev + scrollStep, viewport.maxScroll));
       return;
     }
     if (key.pageDown) {
+      suppressControlFragmentsUntil.current = Date.now() + 120;
       setScrollOffset((prev) => Math.max(0, prev - scrollStep));
       return;
     }
 
     if (!inputActive || hideInput) return;
 
+    const now = Date.now();
+    const likelyControlFragment = now < suppressControlFragmentsUntil.current
+      && /^[\[\]0-9;~A-Za-zO]+$/.test(input.replace(/[\r\n]/g, ""));
+    if (isTerminalControlInput(input) || likelyControlFragment) {
+      return;
+    }
+
     if (key.return) {
       void handleSubmit();
       return;
     }
     if (key.backspace || key.delete) {
-      setInputValue((prev) => prev.slice(0, -1));
+      const chars = Array.from(inputValue);
+      if (key.backspace && cursorIndex > 0) {
+        chars.splice(cursorIndex - 1, 1);
+        setInputValue(chars.join(""));
+        setCursorIndex(cursorIndex - 1);
+      } else if (key.delete && cursorIndex < chars.length) {
+        chars.splice(cursorIndex, 1);
+        setInputValue(chars.join(""));
+      }
+      return;
+    }
+    if (key.leftArrow) {
+      suppressControlFragmentsUntil.current = Date.now() + 120;
+      setCursorIndex((prev) => Math.max(0, prev - 1));
+      return;
+    }
+    if (key.rightArrow) {
+      suppressControlFragmentsUntil.current = Date.now() + 120;
+      setCursorIndex((prev) => Math.min(Array.from(inputValue).length, prev + 1));
+      return;
+    }
+    if (input === "a" && key.ctrl) {
+      setCursorIndex(0);
+      return;
+    }
+    if (input === "e" && key.ctrl) {
+      setCursorIndex(Array.from(inputValue).length);
       return;
     }
     if (
@@ -288,17 +379,19 @@ export function ChatPanel({
       || key.tab
       || key.upArrow
       || key.downArrow
-      || key.leftArrow
-      || key.rightArrow
       || key.ctrl
-      || isTerminalControlInput(input)
     ) {
+      suppressControlFragmentsUntil.current = Date.now() + 120;
       return;
     }
 
     const printable = input.replace(/[\r\n]/g, "");
     if (printable.length > 0) {
-      setInputValue((prev) => `${prev}${printable}`);
+      const chars = Array.from(inputValue);
+      const inserted = Array.from(printable);
+      chars.splice(cursorIndex, 0, ...inserted);
+      setInputValue(chars.join(""));
+      setCursorIndex(cursorIndex + inserted.length);
     }
   });
 
@@ -339,8 +432,18 @@ export function ChatPanel({
             <Text dimColor>  </Text>
             {inputActive ? (
               <Box width={promptValueWidth}>
-                <Text dimColor={inputValue.length === 0}>{visibleInput}</Text>
-                <Text color="cyan">▌</Text>
+                {inputValue.length === 0 ? (
+                  <>
+                    <Text color="cyan">{cursorVisible ? "▌" : " "}</Text>
+                    <Text dimColor>{placeholder}</Text>
+                  </>
+                ) : (
+                  <>
+                    <Text>{promptBeforeCursor}</Text>
+                    <Text color="cyan">{cursorVisible ? "▌" : " "}</Text>
+                    <Text>{promptAfterCursor}</Text>
+                  </>
+                )}
               </Box>
             ) : (
               <Text dimColor>{truncateEnd("Starting agent session...", promptValueWidth)}</Text>

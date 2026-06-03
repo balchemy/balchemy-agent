@@ -249,6 +249,7 @@ function printHelp(): void {
     Ctrl+S                           Open settings
     Ctrl+L                           Clear chat
     Ctrl+N                           Switch agent
+    Ctrl+O                           Export redacted activity transcript
     Ctrl+Q                           Quit
     PgUp / PgDn                      Scroll chat history
     Esc in TRADE CHECK               Cancel; never approve
