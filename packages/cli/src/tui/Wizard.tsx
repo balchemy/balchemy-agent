@@ -1,7 +1,8 @@
 // src/tui/Wizard.tsx — Ink-based onboarding wizard (replaces readline wizard)
 import React, { useState, useCallback, useEffect } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
-import { Select, TextInput } from "@inkjs/ui";
+import { Select } from "@inkjs/ui";
+import { LineInput } from "./LineInput.js";
 import { SecretInput } from "./SecretInput.js";
 import { saveAgent } from "../agent-store.js";
 import { randomUUID } from "node:crypto";
@@ -601,7 +602,13 @@ export function Wizard({ outDir, onComplete }: WizardProps): React.ReactElement 
             <Text dimColor>{truncateEnd("Safety cap to prevent runaway API costs.", contentWidth)}</Text>
             <Box marginTop={1}>
               <Text color="cyan" bold>$  </Text>
-              <TextInput key={inputKey} placeholder="5" onSubmit={handleDailyCost} />
+              <LineInput
+                key={inputKey}
+                allowEmptySubmit
+                placeholder="5"
+                width={Math.max(10, contentWidth - 3)}
+                onSubmit={handleDailyCost}
+              />
             </Box>
           </Box>
         )}
@@ -622,7 +629,13 @@ export function Wizard({ outDir, onComplete }: WizardProps): React.ReactElement 
             <Text dimColor>{truncateEnd("Give your agent a name (or press Enter for default).", contentWidth)}</Text>
             <Box marginTop={1}>
               <Text color="cyan" bold>Name  </Text>
-              <TextInput key={inputKey} placeholder={`agent-${Date.now().toString(36)}`} onSubmit={handleAgentName} />
+              <LineInput
+                key={inputKey}
+                allowEmptySubmit
+                placeholder={`agent-${Date.now().toString(36)}`}
+                width={Math.max(10, contentWidth - 6)}
+                onSubmit={handleAgentName}
+              />
             </Box>
           </Box>
         )}
@@ -633,7 +646,12 @@ export function Wizard({ outDir, onComplete }: WizardProps): React.ReactElement 
             <Text dimColor>{truncateEnd("Your agent's MCP endpoint URL.", contentWidth)}</Text>
             <Box marginTop={1}>
               <Text color="cyan" bold>URL  </Text>
-              <TextInput key={inputKey} placeholder="https://api.balchemy.ai/mcp/YOUR_PUBLIC_ID" onSubmit={handleEndpoint} />
+              <LineInput
+                key={inputKey}
+                placeholder="https://api.balchemy.ai/mcp/YOUR_PUBLIC_ID"
+                width={Math.max(10, contentWidth - 5)}
+                onSubmit={handleEndpoint}
+              />
             </Box>
           </Box>
         )}
@@ -666,7 +684,12 @@ export function Wizard({ outDir, onComplete }: WizardProps): React.ReactElement 
             </Box>
             <Box marginTop={1}>
               <Text color="cyan" bold>Confirm  </Text>
-              <TextInput key={inputKey} placeholder={filePlanHasOverwrites ? "overwrite" : "write"} onSubmit={handleFileReview} />
+              <LineInput
+                key={inputKey}
+                placeholder={filePlanHasOverwrites ? "overwrite" : "write"}
+                width={Math.max(10, contentWidth - 9)}
+                onSubmit={handleFileReview}
+              />
             </Box>
           </Box>
         )}

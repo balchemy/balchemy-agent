@@ -11,7 +11,7 @@
     "rootDir": "src",
     "baseUrl": ".",
     "paths": {
-      "@balchemyai/agent-sdk": ["../sdk/dist/index.d.ts"]
+      "@balchemyai/agent-sdk": ["../balchemy-agent-sdk/dist/index.d.ts"]
     },
     "strict": true,
     "noImplicitAny": true,

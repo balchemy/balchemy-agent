@@ -180,6 +180,56 @@ test("ChatAgent blocks incomplete or random trade previews before confirmation a
   assert.match(blockedToolResult, /Random or unknown token/);
 });
 
+test("ChatAgent treats self-selection trade language as read-only discovery before any trade", async () => {
+  const mcpCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const agent = new ChatAgent(
+    {
+      llmProvider: "openai",
+      llmApiKey: "test-key",
+      llmModel: "gpt-5.4-mini",
+    },
+    {
+      listTools: async () => ({ tools: [] }),
+      callTool: async (name: string, args: Record<string, unknown>) => {
+        mcpCalls.push({ name, args });
+        return { content: [{ type: "text", text: "market-brief: ROHAT, CALEB; risk degraded" }] };
+      },
+    } as unknown as BalchemyMcpClient,
+    fetch,
+  ) as unknown as ChatAgentHarness;
+
+  agent.history = [{ role: "system", content: "test" }];
+  agent.tools = [{
+    name: "agent_market_brief",
+    description: "Broad market discovery",
+    inputSchema: { type: "object", properties: {} },
+  }];
+  agent.callLlm = async () => ({ text: "Önce safe discovery yaptım; risk degraded olduğu için trade göndermiyorum." });
+
+  let confirmationCalls = 0;
+  const toolEvents: Array<{ name: string; result: string }> = [];
+  const userMessage = "0.01 SOL ile kendin bulup alabilrisin";
+  const reply = await agent.chat(
+    userMessage,
+    (name, result) => toolEvents.push({ name, result }),
+    async () => {
+      confirmationCalls += 1;
+      return true;
+    },
+  );
+
+  assert.equal(reply, "Önce safe discovery yaptım; risk degraded olduğu için trade göndermiyorum.");
+  assert.equal(confirmationCalls, 0);
+  assert.deepEqual(mcpCalls, [{
+    name: "agent_market_brief",
+    args: { query: userMessage, chain: "solana" },
+  }]);
+  assert.deepEqual(toolEvents.map((event) => event.name), ["agent_market_brief"]);
+  assert.equal(agent.history[2]?.tool_calls?.[0]?.function.name, "agent_market_brief");
+  const systemMessages = agent.history.filter((entry) => entry.role === "system");
+  assert.match(systemMessages[systemMessages.length - 1]?.content ?? "", /not a random trade/);
+});
+
 test("ChatAgent follows backend suggestedTool redirects for broad discovery", async () => {
   const mcpCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const agent = new ChatAgent(

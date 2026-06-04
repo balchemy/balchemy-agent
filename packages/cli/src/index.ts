@@ -1043,6 +1043,7 @@ async function defaultLauncher(): Promise<void> {
   reporter.write("\n");
 
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY && process.stdout.isTTY });
+  let nextAction: (() => Promise<void>) | null = null;
   try {
     const choice = normalizeChoice(await ask(
       rl,
@@ -1051,13 +1052,14 @@ async function defaultLauncher(): Promise<void> {
     ));
 
     if (choice === "y" || choice === "yes" || choice === "resume" || choice === "last") {
-      await startSavedAgent(last);
+      nextAction = () => startSavedAgent(last);
     } else if (
       Number.isInteger(Number(choice))
       && Number(choice) >= 1
       && Number(choice) <= agents.length
     ) {
-      await startSavedAgent(agents[Number(choice) - 1]!);
+      const selected = agents[Number(choice) - 1]!;
+      nextAction = () => startSavedAgent(selected);
     } else if (
       agents.length > 1
       && (choice === "list" || choice === "choose" || choice === "select" || choice === "agents")
@@ -1065,19 +1067,21 @@ async function defaultLauncher(): Promise<void> {
       const selected = await chooseSavedAgent(rl, agents);
       if (!selected) {
         reporter.warn(`  ${C.D}No matching saved agent. Starting setup instead.${C.R}\n\n`);
-        await runWizardFromCwd();
+        nextAction = () => runWizardFromCwd();
       } else {
-        await startSavedAgent(selected);
+        nextAction = () => startSavedAgent(selected);
       }
     } else if (choice === "new" || choice === "n") {
-      await runWizardFromCwd();
+      nextAction = () => runWizardFromCwd();
     } else {
       reporter.warn(`  ${C.D}Unknown action. Starting setup instead.${C.R}\n\n`);
-      await runWizardFromCwd();
+      nextAction = () => runWizardFromCwd();
     }
   } finally {
     rl.close();
   }
+
+  await (nextAction ?? runWizardFromCwd)();
 }
 
 async function main(): Promise<void> {

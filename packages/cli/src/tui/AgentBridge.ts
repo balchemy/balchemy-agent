@@ -115,6 +115,17 @@ function friendlyError(err: unknown): string {
   return `LLM error: ${truncateError(raw)}`;
 }
 
+function isGracefulLoopDegradation(err: unknown): boolean {
+  const raw = stringifyUnknownError(err);
+  return (
+    /agent_status fetch failed:/i.test(raw)
+    && /continuing with empty snapshot/i.test(raw)
+  ) || (
+    /behavior-rules resource fetch failed:/i.test(raw)
+    && /continuing without rules/i.test(raw)
+  );
+}
+
 function parseJsonObject(text: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(text) as unknown;
@@ -557,6 +568,7 @@ export class AgentBridge {
   private setupStatusUnavailableForScope = false;
   private setupScopeNoticeShown = false;
   private knownWallets: WalletInfo[] = [];
+  private lastLoopDegradationNoticeAt = 0;
 
   constructor(config: TuiConfig, setters: StateSetters) {
     this.config = config;
@@ -655,7 +667,7 @@ export class AgentBridge {
       },
 
       onError: (err) => {
-        this.addErrorMessage(friendlyError(err));
+        this.handleLoopError(err);
       },
 
       onStatusChange: (status) => {
@@ -1740,6 +1752,17 @@ ${walletLines.join("\n")}
   }
   private addSystemMessage(text: string): void {
     this.setters.addMessage({ id: randomUUID(), type: "system", text, timestamp: Date.now() });
+  }
+  private handleLoopError(err: unknown): void {
+    if (isGracefulLoopDegradation(err)) {
+      const now = Date.now();
+      if (now - this.lastLoopDegradationNoticeAt > 60_000) {
+        this.lastLoopDegradationNoticeAt = now;
+        this.addSystemMessage("Runtime context refresh is temporarily degraded; using cached/empty snapshot until the backend rate limit clears.");
+      }
+      return;
+    }
+    this.addErrorMessage(friendlyError(err));
   }
   private addTradeMessage(trade: TradeInfo): void {
     this.setters.addMessage({

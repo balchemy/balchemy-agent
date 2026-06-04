@@ -119,6 +119,19 @@ describe('AgentLoop — fetch logic', () => {
       expect(errors[0].message).toContain('agent_status fetch failed');
     });
 
+    it('caches empty snapshot after MCP failure to avoid rate-limit retry loops', async () => {
+      internals.mcp.callTool = jest.fn().mockRejectedValue(new Error('rate limited'));
+      const errors: Error[] = [];
+      (loop as unknown as { config: AgentLoopConfig }).config.onError = (e) => errors.push(e);
+
+      await internals.fetchPortfolio();
+      await internals.fetchPortfolio();
+
+      expect(internals.mcp.callTool).toHaveBeenCalledTimes(1);
+      expect(errors).toHaveLength(1);
+      expect(internals.portfolioCache?.snapshot).toEqual({});
+    });
+
     it('returns empty snapshot when MCP returns invalid JSON', async () => {
       internals.mcp.callTool = jest.fn().mockResolvedValue(
         makeMcpToolResponse('not-json'),
@@ -160,6 +173,19 @@ describe('AgentLoop — fetch logic', () => {
       expect(rules).toBe('');
       expect(errors).toHaveLength(1);
       expect(errors[0].message).toContain('behavior-rules resource fetch failed');
+    });
+
+    it('caches empty rules briefly after MCP failure to avoid retry loops', async () => {
+      internals.mcp.readResource = jest.fn().mockRejectedValue(new Error('rate limited'));
+      const errors: Error[] = [];
+      (loop as unknown as { config: AgentLoopConfig }).config.onError = (e) => errors.push(e);
+
+      await internals.fetchBehaviorRules();
+      await internals.fetchBehaviorRules();
+
+      expect(internals.mcp.readResource).toHaveBeenCalledTimes(1);
+      expect(errors).toHaveLength(1);
+      expect(internals.rulesCache?.compressed).toBe('');
     });
 
     it('returns empty string when contents array is empty', async () => {

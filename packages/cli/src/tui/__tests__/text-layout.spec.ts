@@ -17,6 +17,8 @@ import {
   getPromptViewport,
   getTranscriptViewport,
   isTerminalControlInput,
+  isTranscriptPageDownInput,
+  isTranscriptPageUpInput,
 } from "../ChatPanel.js";
 import type { TranscriptRow } from "../ChatPanel.js";
 
@@ -100,6 +102,18 @@ test("terminal control input detection filters paging escape fragments", () => {
   }
 });
 
+test("transcript paging accepts raw terminal page-up and page-down fragments", () => {
+  for (const input of ["[5~", "[5~", "[5", "5~", "[5;1~"]) {
+    assert.equal(isTranscriptPageUpInput(input), true);
+    assert.equal(isTranscriptPageDownInput(input), false);
+  }
+
+  for (const input of ["[6~", "[6~", "[6", "6~", "[6;1~"]) {
+    assert.equal(isTranscriptPageDownInput(input), true);
+    assert.equal(isTranscriptPageUpInput(input), false);
+  }
+});
+
 test("prompt viewport keeps cursor visible for long input", () => {
   const value = "Solana yeni pair adaylarını tara ama trade yapma";
   const cursor = value.length;
@@ -117,7 +131,15 @@ test("prompt editor handles backspace, delete and cursor movement before filteri
   );
   assert.deepEqual(
     applyPromptEditorInput({ value: "abc", cursorIndex: 1 }, "\u001b[3~", {}),
-    { value: "ac", cursorIndex: 1 },
+    { value: "bc", cursorIndex: 0 },
+  );
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "abcd", cursorIndex: 2 }, "", { delete: true }),
+    { value: "acd", cursorIndex: 1 },
+  );
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "abcd", cursorIndex: 2 }, "\u001b[3;1~", { delete: true }),
+    { value: "acd", cursorIndex: 1 },
   );
   assert.deepEqual(
     applyPromptEditorInput({ value: "abc", cursorIndex: 2 }, "", { leftArrow: true }),
@@ -133,6 +155,41 @@ test("prompt editor handles backspace, delete and cursor movement before filteri
   );
 });
 
+test("prompt editor erase keys remove the character left of the cursor after navigation", () => {
+  const movedLeft = applyPromptEditorInput(
+    { value: "abcdef", cursorIndex: 6 },
+    "",
+    { leftArrow: true },
+  );
+
+  assert.deepEqual(movedLeft, { value: "abcdef", cursorIndex: 5 });
+  assert.deepEqual(
+    applyPromptEditorInput(movedLeft, "\u007f", {}),
+    { value: "abcdf", cursorIndex: 4 },
+  );
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "abcdef", cursorIndex: 3 }, "\u001b[3~", { delete: true }),
+    { value: "abdef", cursorIndex: 2 },
+  );
+});
+
+test("prompt editor full edit sequence matches terminal user intent", () => {
+  let state = { value: "", cursorIndex: 0 };
+  state = applyPromptEditorInput(state, "abcdef", {});
+  state = applyPromptEditorInput(state, "", { leftArrow: true });
+  state = applyPromptEditorInput(state, "", { leftArrow: true });
+  state = applyPromptEditorInput(state, "\u007f", {});
+
+  assert.deepEqual(state, { value: "abcef", cursorIndex: 3 });
+});
+
+test("prompt editor normalizes pasted newlines without terminal control leakage", () => {
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "risk", cursorIndex: 4 }, " report\nfor token", {}),
+    { value: "risk report for token", cursorIndex: 21 },
+  );
+});
+
 test("prompt editor supports ctrl-a and ctrl-e navigation", () => {
   assert.deepEqual(
     applyPromptEditorInput({ value: "abcdef", cursorIndex: 3 }, "a", { ctrl: true }),
@@ -141,6 +198,40 @@ test("prompt editor supports ctrl-a and ctrl-e navigation", () => {
   assert.deepEqual(
     applyPromptEditorInput({ value: "abcdef", cursorIndex: 3 }, "e", { ctrl: true }),
     { value: "abcdef", cursorIndex: 6 },
+  );
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "abcdef", cursorIndex: 3 }, "", { home: true }),
+    { value: "abcdef", cursorIndex: 0 },
+  );
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "abcdef", cursorIndex: 3 }, "", { end: true }),
+    { value: "abcdef", cursorIndex: 6 },
+  );
+});
+
+test("prompt editor supports readline-style delete shortcuts", () => {
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "hello world", cursorIndex: 6 }, "u", { ctrl: true }),
+    { value: "world", cursorIndex: 0 },
+  );
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "hello world", cursorIndex: 5 }, "k", { ctrl: true }),
+    { value: "hello", cursorIndex: 5 },
+  );
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "hello brave world", cursorIndex: 12 }, "w", { ctrl: true }),
+    { value: "hello world", cursorIndex: 6 },
+  );
+});
+
+test("prompt editor supports word navigation with meta arrows", () => {
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "hello brave world", cursorIndex: 12 }, "", { leftArrow: true, meta: true }),
+    { value: "hello brave world", cursorIndex: 6 },
+  );
+  assert.deepEqual(
+    applyPromptEditorInput({ value: "hello brave world", cursorIndex: 6 }, "", { rightArrow: true, meta: true }),
+    { value: "hello brave world", cursorIndex: 11 },
   );
 });
 
@@ -172,6 +263,40 @@ test("plain transcript export preserves content without panel borders", () => {
   assert.match(transcript, /Mode: shadow/);
   assert.equal(transcript.includes("╭"), false);
   assert.equal(transcript.includes("│"), false);
+});
+
+test("focus transcript rows keep system message content without compact truncation", () => {
+  const longSystemMessage = `Tool: agent_market_brief ${Array.from({ length: 18 }, (_, index) => `candidate-${index}`).join(" ")}`;
+  const compactRows = buildTranscriptRows(
+    [
+      {
+        id: "msg-1",
+        type: "system",
+        text: longSystemMessage,
+        timestamp: Date.parse("2026-02-11T00:00:00.000Z"),
+      },
+    ],
+    28,
+  );
+  const focusRows = buildTranscriptRows(
+    [
+      {
+        id: "msg-1",
+        type: "system",
+        text: longSystemMessage,
+        timestamp: Date.parse("2026-02-11T00:00:00.000Z"),
+      },
+    ],
+    28,
+    { compactSystemRows: false },
+  );
+
+  const compactText = compactRows.map((row) => row.kind === "system" ? row.body : "").join(" ");
+  const focusText = focusRows.map((row) => row.kind === "body" ? row.text : "").join(" ");
+
+  assert.ok(compactText.includes("..."));
+  assert.ok(focusText.includes("candidate-0"));
+  assert.ok(focusText.includes("candidate-17"));
 });
 
 test("trade transcript without explicit side uses neutral trade label", () => {

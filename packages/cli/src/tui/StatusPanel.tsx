@@ -5,12 +5,8 @@ import type { StatusData, WalletInfo } from "./types.js";
 import { getSessionBadge } from "./status-view.js";
 import { displayWidth, truncateMiddle } from "./text-layout.js";
 
-function Divider({ width = 24 }: { width?: number }): React.ReactElement {
-  return (
-    <Box marginY={0}>
-      <Text dimColor>{"-".repeat(Math.max(0, width))}</Text>
-    </Box>
-  );
+function SectionGap(): React.ReactElement {
+  return <Box height={1} />;
 }
 
 function formatUptime(ms: number): string {
@@ -116,7 +112,6 @@ export function StatusPanel({
 }: StatusPanelProps): React.ReactElement {
   const panelWidth = Math.max(18, width);
   const contentWidth = Math.max(6, panelWidth - 4);
-  const dividerWidth = contentWidth;
   const spendWidth = Math.min(compact ? 12 : 16, Math.max(8, contentWidth));
   const isLowBalance = status.balanceSol < 0.01;
   const sessionBadge = getSessionBadge(status);
@@ -206,13 +201,13 @@ export function StatusPanel({
         <Text dimColor>{providerText}</Text>
       </Box>
 
-      <Divider width={dividerWidth} />
+      <SectionGap />
 
       <Header title="Capital" />
       <Text color="green" bold>{capitalText}</Text>
       {isLowBalance && <Text color="yellow">{lowBalanceText}</Text>}
 
-      <Divider width={dividerWidth} />
+      <SectionGap />
 
       <Header title="Wallets" />
       {status.wallets.length === 0 ? (
@@ -224,13 +219,13 @@ export function StatusPanel({
       )}
       {status.wallets.length > walletRows.length && <Text dimColor>+{status.wallets.length - walletRows.length} more</Text>}
 
-      <Divider width={dividerWidth} />
+      <SectionGap />
 
       <Header title="Runtime" />
       <Text color="cyan">{runtimeText}</Text>
       <Text dimColor>{fitText(`Uptime ${formatUptime(status.uptime)}`, contentWidth)}</Text>
 
-      <Divider width={dividerWidth} />
+      <SectionGap />
 
       <Header title="Positions" />
       {status.activeTrades.length === 0 && <Text dimColor>No live positions</Text>}
@@ -244,7 +239,7 @@ export function StatusPanel({
       ))}
       {status.activeTrades.length > 2 && <Text dimColor>+{status.activeTrades.length - 2} more</Text>}
 
-      <Divider width={dividerWidth} />
+      <SectionGap />
 
       <Header title="LLM" />
       <Text color="cyan">{meter(status.llmCostToday, status.maxDailyLlmCost, spendWidth)}</Text>

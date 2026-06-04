@@ -30,8 +30,9 @@ interface RulesCache {
   fetchedAt: number;
 }
 
-const PORTFOLIO_TTL_MS = 30_000;    // 30 seconds
-const RULES_TTL_MS    = 5 * 60_000; // 5 minutes
+const PORTFOLIO_TTL_MS = 30_000;         // 30 seconds
+const RULES_TTL_MS    = 5 * 60_000;      // 5 minutes
+const RULES_FAILURE_TTL_MS = 30_000;     // 30 seconds
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -439,7 +440,9 @@ export class AgentLoop {
       const msg = err instanceof Error ? err.message : String(err);
       // Graceful degradation: continue with empty snapshot.
       this.config.onError?.(new Error(`agent_status fetch failed: ${msg}; continuing with empty snapshot`));
-      return {};
+      const snapshot: AgentPortfolioSnapshot = {};
+      this.portfolioCache = { snapshot, fetchedAt: now };
+      return snapshot;
     }
   }
 
@@ -451,8 +454,11 @@ export class AgentLoop {
    */
   private async fetchBehaviorRules(): Promise<string> {
     const now = Date.now();
-    if (this.rulesCache && (now - this.rulesCache.fetchedAt) < RULES_TTL_MS) {
-      return this.rulesCache.compressed;
+    if (this.rulesCache) {
+      const ttl = this.rulesCache.compressed.length > 0 ? RULES_TTL_MS : RULES_FAILURE_TTL_MS;
+      if ((now - this.rulesCache.fetchedAt) < ttl) {
+        return this.rulesCache.compressed;
+      }
     }
 
     const uri = `balchemy://behavior-rules/${this.publicId}`;
@@ -465,6 +471,7 @@ export class AgentLoop {
       const msg = err instanceof Error ? err.message : String(err);
       // Graceful degradation: continue without rule context.
       this.config.onError?.(new Error(`behavior-rules resource fetch failed: ${msg}; continuing without rules`));
+      this.rulesCache = { compressed: '', fetchedAt: now };
       return '';
     }
   }

@@ -112,6 +112,46 @@ function extractSuggestedToolFollowUp(
   };
 }
 
+function hasTool(tools: ToolDef[], name: string): boolean {
+  return tools.some((tool) => tool.name === name);
+}
+
+function hasBuyIntent(text: string): boolean {
+  return /\b(buy|purchase|long|al|alım|alim|alabilir\w*|alabil\w*|satın al|satin al)\b/i.test(text);
+}
+
+function hasSelfSelectionIntent(text: string): boolean {
+  return /\b(kendin|kendim|kendi|bulup|bul ve|ara ve|seç|sec|uygun|fırsat|firsat|adaylardan|kurala göre|kurallara göre|matches rules|find and buy|pick one)\b/i.test(text);
+}
+
+function inferDiscoveryChainFromText(text: string): "solana" | "base" | undefined {
+  if (/\b(solana|sol)\b/i.test(text)) return "solana";
+  if (/\b(base|evm|ethereum|eth)\b/i.test(text)) return "base";
+  return undefined;
+}
+
+function buildAutonomousSelectionDiscoveryCall(userMessage: string, tools: ToolDef[]): ToolCall | undefined {
+  if (!hasTool(tools, "agent_market_brief")) return undefined;
+  if (!hasBuyIntent(userMessage) || !hasSelfSelectionIntent(userMessage)) return undefined;
+
+  const args: Record<string, unknown> = {
+    query: userMessage,
+  };
+  const chain = inferDiscoveryChainFromText(userMessage);
+  if (chain) {
+    args.chain = chain;
+  }
+
+  return {
+    id: `autonomous-discovery-${randomUUID()}`,
+    type: "function",
+    function: {
+      name: "agent_market_brief",
+      arguments: JSON.stringify(args),
+    },
+  };
+}
+
 // ── ChatAgent ─────────────────────────────────────────────────────────────────
 
 export class ChatAgent {
@@ -200,6 +240,19 @@ export class ChatAgent {
     confirmTrade?: (details: TradeConfirmationDetails) => Promise<boolean>,
   ): Promise<string> {
     this.history.push({ role: "user", content: userMessage });
+    const autonomousDiscoveryCall = buildAutonomousSelectionDiscoveryCall(userMessage, this.tools);
+    if (autonomousDiscoveryCall) {
+      this.history.push({
+        role: "assistant",
+        content: "",
+        tool_calls: [autonomousDiscoveryCall],
+      });
+      await this.executeToolCall(autonomousDiscoveryCall, onToolCall, confirmTrade);
+      this.history.push({
+        role: "system",
+        content: "The latest user authorized candidate selection, not a random trade. Use the read-only market brief and any needed candidate/risk reports to produce a concrete candidate. Do not call trade_command until exact action, chain, token/mint/contract, amount, and non-degraded policy/risk facts are available.",
+      });
+    }
 
     const MAX_ROUNDS = 10;
     for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -654,7 +707,7 @@ const SYSTEM_PROMPT = `You are a Balchemy autonomous trading agent. You help the
 
 You have access to MCP tools via tool calling. Always call tools when you need to take action — never just describe what you would do.
 
-Use only MCP tools that are listed for this session. For runtime, portfolio, open-position, pending-order, context, or activity snapshot requests, use agent_context_snapshot when it is advertised; otherwise use agent_status and clearly say which data is unavailable. For research, portfolio, new launch, trending-token, liquidity-scan, opportunity, candidate, or Turkish prompts such as "tara" / "yeni launch", use the dedicated advertised safe tool when present: agent_market_brief for broad discovery, agent_candidate_report for one specific asset, and agent_risk_report for one specific asset's risk. Use ask_bot only as fallback when no dedicated safe tool is available. Never invent or call tool names that are not available.
+Use only MCP tools that are listed for this session. For runtime, portfolio, open-position, pending-order, context, or activity snapshot requests, use agent_context_snapshot when it is advertised; otherwise use agent_status and clearly say which data is unavailable. For research, portfolio, new launch, trending-token, liquidity-scan, opportunity, candidate, or Turkish prompts such as "tara" / "yeni launch", use the dedicated advertised safe tool when present: agent_market_brief for broad discovery, agent_candidate_report for one specific asset, and agent_risk_report for one specific asset's risk. If the user says "kendin bul", "kendin bulup al", "kurallara göre seç/al", "find and buy", or otherwise authorizes the agent to select an opportunity, treat that as authorization to run read-only discovery and risk/candidate checks first, not as authorization to trade a random unknown token. Use ask_bot only as fallback when no dedicated safe tool is available. Never invent or call tool names that are not available.
 
 For runtime mutations such as pause, resume, arm, disarm, or set-mode, use agent_control only when it is advertised. If agent_control is not advertised or the MCP key lacks manage scope, say the mutation is unavailable in this session. Do not answer a pause/resume/arm/disarm request by only reading agent_context_snapshot.
 
@@ -727,8 +780,9 @@ When setup is incomplete, check setup status with the available setup tool. Then
 - Respect the user's rules at all times.
 - When a tool is unavailable, rate limited, degraded, or not present in tools/list, state that exact condition and stop. Do not say vague follow-ups like "istersen tekrar deneyebilirim" or "I can try again" unless the user asks you to retry. Give the concrete next diagnostic step instead.
 - Never treat missing market/risk/provider data as a safe result. Say unavailable/degraded and do not recommend execution.
-- Never call trade_command for a random token, unknown token, broad discovery result, missing chain, missing amount, or unresolved ticker. First use read-only discovery/risk tools, then ask the user to choose an exact token/mint/contract and amount.
+- Never call trade_command for a random token, unknown token, broad discovery result, missing chain, missing amount, or unresolved ticker. First use read-only discovery/risk tools. If the user explicitly authorizes autonomous selection ("kendin bul", "kurallara göre seç/al"), you may choose a concrete candidate only after evidence is available, then continue with candidate/risk checks and policy-gated trade planning.
 - A trade_command request must include exact action, chain, token/mint/contract, and amount. If any of those facts are unknown, stop with blocked/unavailable; do not send the MCP trade call.
+- Do not answer "kendin bulup alabilirsin" with "I cannot find anything myself." You can use safe discovery tools. What you cannot do is execute a random or evidence-free trade.
 
 ## LANGUAGE
 Respond in the same language the user writes in. Turkish input → Turkish response. English → English.

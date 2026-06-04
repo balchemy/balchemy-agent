@@ -1,11 +1,12 @@
 // src/tui/App.tsx
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
-import { Select, TextInput } from "@inkjs/ui";
+import { Select } from "@inkjs/ui";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { ChatPanel, formatTranscriptPlainText } from "./ChatPanel.js";
+import { LineInput } from "./LineInput.js";
 import { StatusPanel } from "./StatusPanel.js";
 import { SecretInput } from "./SecretInput.js";
 import { AgentBridge } from "./AgentBridge.js";
@@ -107,6 +108,12 @@ function KeyHelpRow({
       <Text dimColor>{truncateEnd(label, Math.max(8, width - 13))}</Text>
     </Text>
   );
+}
+
+export function calculateChatViewportRows(activityHeight: number, activityFocus: boolean): number {
+  // Normal mode must reserve activity border, header, prompt box, scroll hints,
+  // and one safety row so transcript rows never collide with prompt chrome.
+  return Math.max(2, activityHeight - (activityFocus ? 2 : 8));
 }
 
 // ── App ──────────────────────────────────────────────────────────────────────
@@ -292,7 +299,7 @@ export function App({ config }: AppProps): React.ReactElement {
       return;
     }
 
-    // Only handle shortcuts in chat mode — let Select/TextInput handle keys in settings/help
+    // Only handle shortcuts in chat mode; overlay controls own their input while active.
     if (mode !== "chat" && mode !== "activity-focus") return;
 
     if (input === "s" && key.ctrl) {
@@ -559,7 +566,7 @@ export function App({ config }: AppProps): React.ReactElement {
   const inSettings = appMode !== "chat" && appMode !== "activity-focus" && appMode !== "help";
   const helpVisible = appMode === "help";
   const overlayVisible = inSettings || helpVisible || Boolean(tradeConfirm);
-  const chatInputActive = inputActive && !tradeConfirm && !inSettings && !helpVisible;
+  const chatInputActive = inputActive && !activityFocus && !tradeConfirm && !inSettings && !helpVisible;
   const providerLabel = status.provider ?? resolveProviderLabel(config.llmProvider, config.llmBaseUrl);
   const headerModel = status.model ?? config.llmModel ?? "default";
   const headerSpend = `$${status.llmCostToday.toFixed(2)} / $${status.maxDailyLlmCost.toFixed(2)}`;
@@ -572,21 +579,35 @@ export function App({ config }: AppProps): React.ReactElement {
       : status.sseConnected
       ? "live"
       : "warning";
-  const overlayHeight = overlayVisible ? 7 : 0;
-  const mainHeight = Math.max(compactLayout ? 12 : 14, termHeight - (compactLayout ? 10 : 8) - overlayHeight);
-  const visibleStatusHeight = activityFocus ? 0 : Math.min(10, Math.max(7, Math.floor(mainHeight * 0.4)));
-  const statusPanelHeight = compactLayout ? visibleStatusHeight : mainHeight;
-  const activityHeight = activityFocus ? mainHeight : compactLayout ? Math.max(6, mainHeight - statusPanelHeight - 1) : mainHeight;
-  const chatViewportRows = Math.max(3, activityHeight - 5);
   const statusBadgeLabel = truncateMiddle(status.status.toUpperCase(), compactLayout ? 16 : 18);
   const compactHeaderLine = truncateMiddle(
     `${providerLabel} / ${headerModel} · LLM ${headerSpend}`,
     overlayContentWidth,
   );
+  const fixedChromeRows = compactLayout ? 10 : 8;
+  const minMainRows = compactLayout ? 5 : 6;
+  const requestedOverlayHeight = tradeConfirm
+    ? 10
+    : helpVisible
+      ? 9
+      : appMode === "settings-select" || appMode === "settings-edit-select"
+        ? 8
+        : inSettings
+          ? 5
+          : 0;
+  const maxOverlayHeight = Math.max(0, termHeight - fixedChromeRows - minMainRows);
+  const overlayHeight = overlayVisible ? Math.min(requestedOverlayHeight, maxOverlayHeight) : 0;
+  const mainHeight = Math.max(minMainRows, termHeight - fixedChromeRows - overlayHeight);
+  const visibleStatusHeight = activityFocus ? 0 : Math.min(10, Math.max(5, Math.floor(mainHeight * 0.4)));
+  const statusPanelHeight = compactLayout ? visibleStatusHeight : mainHeight;
+  const activityHeight = activityFocus ? mainHeight : compactLayout ? Math.max(5, mainHeight - statusPanelHeight - 1) : mainHeight;
+  const chatViewportRows = calculateChatViewportRows(activityHeight, activityFocus);
   const shortcutLine = truncateEnd(
-    `${compactLayout
-      ? "^S settings  ^F focus  ^O export  ? help  ^L clear  ^Q quit  PgUp/PgDn transcript"
-      : "^S settings  ^F activity focus  ^O export  ? help  ^L clear  ^N new  ^Q quit  PgUp/PgDn transcript"}${overlayVisible ? "  ESC back" : ""}`,
+    activityFocus
+      ? "^F chat input  PgUp/PgDn scroll pages  Up/Down scroll lines  ^O export  ^Q quit"
+      : `${compactLayout
+        ? "^S settings  ^F copy focus  ^O export  ? help  ^L clear  ^Q quit  PgUp/PgDn scroll"
+        : "^S settings  ^F activity copy focus  ^O export  ? help  ^L clear  ^N new  ^Q quit  PgUp/PgDn scroll"}${overlayVisible ? "  ESC back" : ""}`,
     overlayContentWidth,
   );
 
@@ -639,20 +660,34 @@ export function App({ config }: AppProps): React.ReactElement {
       {/* Main content */}
       <Box flexDirection={compactLayout ? "column" : "row"} height={mainHeight} paddingX={1} gap={mainGap}>
         {compactLayout && !activityFocus && <StatusPanel status={status} width={statusWidth} compact={compactLayout} height={statusPanelHeight} />}
-        <Box flexDirection="column" width={activityPanelWidth} flexShrink={0} height={activityHeight} borderStyle="round" borderColor="gray" paddingY={0}>
-          <Box paddingX={1}>
-            <Text color="white" bold>Activity</Text>
-            {!compactLayout && <Text dimColor>{activityFocus ? "  focus mode: transcript-only selection" : "  chat, tool traces and live decisions"}</Text>}
-          </Box>
+        <Box
+          flexDirection="column"
+          width={activityPanelWidth}
+          flexShrink={0}
+          height={activityHeight}
+          paddingY={0}
+          paddingX={activityFocus ? 0 : 1}
+          borderStyle={activityFocus ? undefined : "round"}
+          borderColor={activityFocus ? undefined : "gray"}
+        >
+          {!activityFocus && (
+            <Box paddingX={1}>
+              <Text color="white" bold>Activity</Text>
+              {!compactLayout && <Text dimColor>  chat, tool traces and live decisions</Text>}
+            </Box>
+          )}
           <ChatPanel
             messages={messages}
             onSend={handleSend}
             inputActive={chatInputActive}
-            hideInput={overlayVisible}
+            hideInput={overlayVisible || activityFocus}
             pageSize={chatViewportRows}
             inputPlaceholder="Ask, adjust rules, or inspect this session..."
             width={chatPanelWidth}
             thinking={thinking}
+            scrollActive={!overlayVisible}
+            arrowScroll={activityFocus}
+            copyMode={activityFocus}
           />
         </Box>
         {!compactLayout && !activityFocus && <StatusPanel status={status} width={statusWidth} compact={compactLayout} height={statusPanelHeight} />}
@@ -660,7 +695,7 @@ export function App({ config }: AppProps): React.ReactElement {
 
       {/* Help panel — replaces input area when active */}
       {helpVisible && (
-        <Box borderStyle="round" borderColor="cyan" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth}>
+        <Box borderStyle="round" borderColor="cyan" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth} height={overlayHeight} overflowY="hidden">
           <Box marginBottom={0}>
             <Text color="white" bold>Keyboard Help</Text>
             {!compactLayout && <Text dimColor>  cockpit shortcuts and safety controls</Text>}
@@ -668,16 +703,16 @@ export function App({ config }: AppProps): React.ReactElement {
           <KeyHelpRow keys="Ctrl+S" label="Open session settings for provider, model, limits, slippage and strategy." width={overlayContentWidth} />
           <KeyHelpRow keys="Ctrl+L" label="Clear visible chat activity without changing agent state." width={overlayContentWidth} />
           {!compactLayout && <KeyHelpRow keys="Ctrl+N" label="Return to launcher and choose or create another saved agent." width={overlayContentWidth} />}
-          <KeyHelpRow keys="Ctrl+F" label="Toggle Activity focus so mouse selection only covers the transcript panel." width={overlayContentWidth} />
+          <KeyHelpRow keys="Ctrl+F" label="Toggle Activity copy focus: hide status panel and remove transcript borders." width={overlayContentWidth} />
           <KeyHelpRow keys="Ctrl+O" label="Export a redacted plain-text transcript to ~/.balchemy/activity-latest.txt." width={overlayContentWidth} />
-          <KeyHelpRow keys="PgUp/PgDn" label="Scroll the transcript by rendered rows while keeping the prompt clean." width={overlayContentWidth} />
+          <KeyHelpRow keys="PgUp/PgDn" label="Scroll the transcript by rendered rows; in Activity focus, Up/Down scroll by line." width={overlayContentWidth} />
           <KeyHelpRow keys="Esc / ?" label="Close this panel; trade prompts only execute when you type TRADE." width={overlayContentWidth} />
         </Box>
       )}
 
       {/* Settings panel — replaces input area when active */}
       {appMode === "settings-select" && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth}>
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth} height={overlayHeight} overflowY="hidden">
           <Box marginBottom={0}>
             <Text color="white" bold>Session Settings</Text>
             {!compactLayout && <Text dimColor>  provider, limits and strategy controls</Text>}
@@ -689,7 +724,7 @@ export function App({ config }: AppProps): React.ReactElement {
       )}
 
       {appMode === "settings-edit-select" && editItem && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth}>
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth} height={overlayHeight} overflowY="hidden">
           <Text color="white" bold>{editItem.label}</Text>
           <Text dimColor>{truncateMiddle("Select a new value for this setting.", overlayContentWidth)}</Text>
           <Select options={editSelectOptions} onChange={handleSelectValue} />
@@ -698,14 +733,16 @@ export function App({ config }: AppProps): React.ReactElement {
       )}
 
       {appMode === "settings-edit-text" && editItem && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth}>
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth} height={overlayHeight} overflowY="hidden">
           <Text color="white" bold>{editItem.label}</Text>
           <Text dimColor>{truncateMiddle(`Current value  ${settingsValues[editItem.key] ?? "?"}`, overlayContentWidth)}</Text>
           <Box>
             <Text color="yellow" bold>New</Text>
             <Text dimColor>  </Text>
-            <TextInput
+            <LineInput
               key={settingsInputKey}
+              active={appMode === "settings-edit-text"}
+              width={Math.max(12, overlayContentWidth - 7)}
               placeholder="Enter new value..."
               onSubmit={handleTextValue}
             />
@@ -714,7 +751,7 @@ export function App({ config }: AppProps): React.ReactElement {
       )}
 
       {appMode === "settings-edit-apikey" && (
-        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth}>
+        <Box borderStyle="round" borderColor="yellow" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth} height={overlayHeight} overflowY="hidden">
           <Text color="white" bold>{truncateMiddle(`API Key for ${pendingProvider}`, overlayContentWidth)}</Text>
           <Text dimColor>{truncateMiddle("Paste the new key below. Esc skips this step.", overlayContentWidth)}</Text>
           <Box>
@@ -731,30 +768,27 @@ export function App({ config }: AppProps): React.ReactElement {
 
       {/* Trade confirmation overlay */}
       {tradeConfirm && (
-        <Box borderStyle="round" borderColor="red" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth}>
-          <Box marginBottom={1}>
+        <Box borderStyle="round" borderColor="red" paddingX={1} paddingY={0} flexDirection="column" marginX={1} width={overlayWidth} height={overlayHeight} overflowY="hidden">
+          <Box marginBottom={0}>
             <HeaderBadge label="TRADE CHECK" tone="danger" />
             {!compactLayout && <Text dimColor>  review before approved execution</Text>}
           </Box>
           <Text color="white" wrap="wrap">{tradeConfirm.details.preview}</Text>
-          <Box flexDirection="column" marginTop={1}>
-            <Text dimColor>Agent  {truncateMiddle(config.publicId, 28)}</Text>
-            <Text dimColor>Host   {truncateMiddle(config.mcpEndpoint, 42)}</Text>
-            <Text dimColor>Scope  MCP call through Balchemy execution guard</Text>
-            <Text dimColor>Mode   {config.shadowMode ? "shadow / no live order" : "live-approved / broadcasts only after approval"}</Text>
-            <Text dimColor>Chain  {tradeConfirm.details.chain}</Text>
-            <Text dimColor>Intent {truncateEnd(tradeConfirm.details.intent, 52)}</Text>
-            <Text dimColor>Token  {truncateMiddle(tradeConfirm.details.token, 52)}</Text>
-            <Text dimColor>Amount {tradeConfirm.details.amount}</Text>
+          <Box flexDirection="column" marginTop={0}>
+            <Text dimColor>Agent {truncateMiddle(config.publicId, 24)}  Host {truncateMiddle(config.mcpEndpoint, Math.max(18, overlayContentWidth - 38))}</Text>
+            <Text dimColor>Mode  {config.shadowMode ? "shadow / no live order" : "live-approved / broadcasts only after approval"}</Text>
+            <Text dimColor>Chain {tradeConfirm.details.chain}  Amount {tradeConfirm.details.amount}  Token {truncateMiddle(tradeConfirm.details.token, Math.max(8, overlayContentWidth - 34))}</Text>
           </Box>
-          <Box marginTop={1} flexDirection="column">
+          <Box marginTop={0} flexDirection="column">
             <Text color="yellow" bold>Approve only if agent, host, chain, token and amount all match your intent.</Text>
-            <Text dimColor>Type this exact phrase to execute, or anything else to cancel:</Text>
+            <Text dimColor>Type exact phrase to execute; anything else cancels.</Text>
             <Text color="red" bold>{tradeConfirm.details.approvalPhrase}</Text>
           </Box>
-          <Box marginTop={1}>
-            <TextInput
+          <Box marginTop={0}>
+            <LineInput
               key={confirmKey}
+              active={Boolean(tradeConfirm)}
+              width={Math.max(12, overlayContentWidth)}
               placeholder="exact phrase or cancel"
               onSubmit={handleConfirmInput}
             />
@@ -763,10 +797,14 @@ export function App({ config }: AppProps): React.ReactElement {
       )}
 
       {/* Bottom shortcut bar */}
-      <Box paddingX={1} marginTop={1}>
-        <Box borderStyle="round" borderColor="gray" paddingX={1} width={overlayWidth}>
+      <Box paddingX={1} marginTop={activityFocus ? 0 : 1}>
+        {activityFocus ? (
           <Text dimColor>{shortcutLine}</Text>
-        </Box>
+        ) : (
+          <Box borderStyle="round" borderColor="gray" paddingX={1} width={overlayWidth}>
+            <Text dimColor>{shortcutLine}</Text>
+          </Box>
+        )}
       </Box>
     </Box>
   );

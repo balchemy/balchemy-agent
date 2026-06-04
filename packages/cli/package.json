@@ -59,6 +59,7 @@
   "scripts": {
     "build": "pnpm --dir ../sdk build && tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "pnpm run build && find dist \\( -path '*/__tests__/*.spec.js' -o -path '*/__tests__/*.test.js' \\) -print | sort | xargs node --test",
     "prepublishOnly": "pnpm run typecheck && pnpm run build"
   }
 }
