@@ -7,6 +7,20 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.3.6] — 2026-06-05
+
+### Fixed
+
+- Keep the CLI cockpit on one input owner so terminal text is not mirrored into a second shell prompt.
+- Harden prompt editing after cursor movement: Backspace/Delete, paste normalization, erase-left, word navigation, and long-input cursor viewport are covered by regression tests.
+- Add activity transcript paging and borderless focus/export behavior so copying history does not include TUI chrome.
+- Reduce repeated rate-limit pressure in the SDK loop by briefly caching empty runtime/rules snapshots after backend fetch failures.
+
+### Notes
+
+- No wallet keys, trading internals, or backend policy logic are shipped in the public packages.
+- Publish `@balchemyai/agent-sdk@0.3.6` before `balchemy@0.3.6` so the CLI dependency resolves from npm semver.
+
 ## [0.3.5] — 2026-06-04
 
 ### Fixed

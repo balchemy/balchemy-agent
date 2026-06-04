@@ -1,6 +1,6 @@
 {
   "name": "balchemy",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "license": "MIT",
   "type": "module",
   "description": "Scaffold and run a local Balchemy MCP agent client",
@@ -43,7 +43,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@balchemyai/agent-sdk": "^0.3.5",
+    "@balchemyai/agent-sdk": "^0.3.6",
     "@inkjs/ui": "^2.0.0",
     "dotenv": "^16.0.0",
     "ink": "^6.0.0",
