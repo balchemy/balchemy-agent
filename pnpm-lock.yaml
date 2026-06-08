@@ -11,7 +11,7 @@ importers:
   packages/cli:
     dependencies:
       '@balchemyai/agent-sdk':
-        specifier: ^0.3.6
+        specifier: ^0.3.7
         version: link:../sdk
       '@inkjs/ui':
         specifier: ^2.0.0

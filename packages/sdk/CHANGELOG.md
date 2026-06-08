@@ -7,6 +7,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.3.7] — 2026-06-08
+
+### Fixed
+
+- Keep the public CLI bin executable after local and release builds so `balchemy`
+  and `npx balchemy` do not fail with `Permission denied`.
+
+### Notes
+
+- SDK API surface is unchanged; this release keeps SDK and CLI package versions
+  aligned for public npm consumers.
+- No wallet keys, trading internals, or backend policy logic are shipped in the
+  public packages.
+- Publish `@balchemyai/agent-sdk@0.3.7` before `balchemy@0.3.7` so the CLI
+  dependency resolves from npm semver.
+
 ## [0.3.6] — 2026-06-05
 
 ### Fixed
