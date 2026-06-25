@@ -205,8 +205,10 @@ describe('AgentLoop — fetch logic', () => {
       const ri = asInternals(routedLoop);
 
       // Inject mock MCP
-      ri.mcp.readResource = jest.fn().mockResolvedValue([]);
-      ri.mcp.callTool = jest.fn().mockResolvedValue(makeMcpToolResponse('{}'));
+      ri.mcp.readResource = jest.fn().mockResolvedValue([{ text: 'rules: hold unless evidence is fresh' }]);
+      ri.mcp.callTool = jest.fn().mockResolvedValue(makeMcpToolResponse(
+        '{"structured":{"autonomous_runtime":{"mode":"live_armed","armed":true,"paused":false}}}',
+      ));
 
       // Inject mock LLM that confirms setModel was called
       const mockLlm = makeMockLlm('{"action":"hold"}');
@@ -224,8 +226,10 @@ describe('AgentLoop — fetch logic', () => {
 
     it('setModel is NOT called when cheapModel/fullModel not configured', async () => {
       const ri = asInternals(loop);
-      ri.mcp.readResource = jest.fn().mockResolvedValue([]);
-      ri.mcp.callTool = jest.fn().mockResolvedValue(makeMcpToolResponse('{}'));
+      ri.mcp.readResource = jest.fn().mockResolvedValue([{ text: 'rules: hold unless evidence is fresh' }]);
+      ri.mcp.callTool = jest.fn().mockResolvedValue(makeMcpToolResponse(
+        '{"structured":{"autonomous_runtime":{"mode":"live_armed","armed":true,"paused":false}}}',
+      ));
 
       const mockLlm = makeMockLlm('{"action":"hold"}');
       (loop as unknown as { llm: LlmAdapter }).llm = mockLlm;

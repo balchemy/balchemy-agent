@@ -1,7 +1,7 @@
 // src/tui/AgentBridge.ts
 import { randomUUID } from "node:crypto";
 import { AgentLoop, connectMcp } from "@balchemyai/agent-sdk";
-import type { AgentLoopConfig, BalchemyMcpClient } from "@balchemyai/agent-sdk";
+import type { AgentDecision, AgentLoopConfig, BalchemyMcpClient } from "@balchemyai/agent-sdk";
 import type { ChatMessage, StatusData, TradeConfirmationDetails, TradeInfo, TuiConfig, WalletInfo } from "./types.js";
 import { ChatAgent } from "./ChatAgent.js";
 import {
@@ -30,6 +30,86 @@ function stringifyUnknownError(error: unknown): string {
 function isMcpScopeError(error: unknown): boolean {
   const raw = stringifyUnknownError(error);
   return /insufficient(?:\s|_)+mcp(?:\s|_)+key(?:\s|_)+scope|insufficient(?:\s|_)+scope|\b403\b/i.test(raw);
+}
+
+export function shouldCountTuiActivityEvent(eventType: unknown, data: Record<string, unknown> | undefined): boolean {
+  const normalized = String(eventType ?? "").trim().toLowerCase();
+  if (normalized === "subscription_event" || normalized === "subscription_digest") {
+    const delta = data?.delta;
+    if (delta && typeof delta === "object" && !Array.isArray(delta)) {
+      const events = (delta as Record<string, unknown>).events;
+      return Array.isArray(events) ? events.length > 0 : true;
+    }
+    return true;
+  }
+
+  return normalized !== ""
+    && !/^(heartbeat|ping|pong|keepalive|keep-alive|connected|connection|status|message)$/.test(normalized);
+}
+
+export type TuiLoopNoticeAction = "blocked" | "degraded" | "approval_required";
+
+const LOOP_NOTICE_DEDUPE_MS = 60_000;
+
+export function normalizeTuiLoopNoticeAction(action: unknown): TuiLoopNoticeAction | null {
+  const normalized = String(action ?? "").trim().toLowerCase();
+  if (normalized === "blocked" || normalized === "hold") return "blocked";
+  if (normalized === "degraded") return "degraded";
+  if (normalized === "approval_required" || normalized === "approval-required") return "approval_required";
+  return null;
+}
+
+function normalizeLoopNoticeText(text: string): string {
+  return text
+    .replace(/^(?:blocked|degraded|approval required|approval_required):\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function loopNoticeTextBucket(text: string): string {
+  const normalized = normalizeLoopNoticeText(text);
+  const stableCodes = normalized.match(/\b[a-z][a-z0-9]+(?:_[a-z0-9]+)+\b/g);
+  if (stableCodes?.length) {
+    return [...new Set(stableCodes)].sort().join(",");
+  }
+  if (
+    /\b(fresh|candidate|risk|evidence|evidenceid|refid|source health|heartbeat|tool invocation|working set)\b/.test(normalized)
+    && /\b(missing|no|not available|unavailable|cannot|blocked|insufficient)\b/.test(normalized)
+  ) {
+    return "missing-candidate-or-risk-evidence";
+  }
+  if (/\b(rate limited|quota|provider limited)\b/.test(normalized)) {
+    return "source-rate-limited";
+  }
+  if (/\b(disconnected|not connected|pending logs)\b/.test(normalized)) {
+    return "source-disconnected";
+  }
+  if (/\b(degraded|unavailable|source health)\b/.test(normalized)) {
+    return "source-degraded";
+  }
+  return normalized;
+}
+
+export function buildTuiLoopNoticeFingerprint(
+  action: TuiLoopNoticeAction,
+  text: string,
+  token?: string,
+  amount?: string,
+): string {
+  return [
+    action,
+    token?.trim().toLowerCase() ?? "",
+    amount?.trim().toLowerCase() ?? "",
+    loopNoticeTextBucket(text),
+  ].join("|");
+}
+
+export function formatTuiLoopNotice(action: TuiLoopNoticeAction, text: string): string {
+  const cleanText = text.replace(/\s+/g, " ").trim() || "No executable trade decision is available.";
+  if (action === "degraded") return `Degraded: ${cleanText}`;
+  if (action === "approval_required") return `Approval required: ${cleanText}`;
+  return `Blocked: ${cleanText}`;
 }
 
 export function isSetupBypassReadOnlyMessage(text: string): boolean {
@@ -569,6 +649,7 @@ export class AgentBridge {
   private setupScopeNoticeShown = false;
   private knownWallets: WalletInfo[] = [];
   private lastLoopDegradationNoticeAt = 0;
+  private lastLoopNotice: { fingerprint: string; timestamp: number } | null = null;
 
   constructor(config: TuiConfig, setters: StateSetters) {
     this.config = config;
@@ -605,6 +686,7 @@ export class AgentBridge {
         llmModel: this.config.llmModel,
         llmBaseUrl: this.config.llmBaseUrl,
         llmTimeoutMs: this.config.llmTimeoutMs ?? 30_000,
+        publicId: this.config.publicId,
       },
       this.mcp,
       this.replayFetch,
@@ -640,20 +722,40 @@ export class AgentBridge {
             this.addSystemMessage(`New token: ${mint}... (${String(evtData?.launchpad ?? "unknown")})`);
           }
         }
-        this.setters.setStatus((prev) => ({ ...prev, eventsReceived: prev.eventsReceived + 1 }));
+        if (shouldCountTuiActivityEvent(eventType, data)) {
+          this.setters.setStatus((prev) => ({ ...prev, eventsReceived: prev.eventsReceived + 1 }));
+        }
       },
 
       onDecision: (decision) => {
         const reasoning = decision.reasoning ?? `${decision.action} ${decision.token ?? ""} ${decision.amount ?? ""}`;
-        this.addAgentMessage(reasoning);
+        const noticeAction = normalizeTuiLoopNoticeAction(decision.action);
+        if (noticeAction) {
+          this.addLoopNotice(noticeAction, reasoning, decision);
+        } else {
+          this.addAgentMessage(reasoning);
+        }
         this.setters.setStatus((prev) => ({ ...prev, decisionsExecuted: prev.decisionsExecuted + 1 }));
       },
 
       onTradeResult: (result) => {
+        const noticeAction = normalizeTuiLoopNoticeAction(result.action);
+        if (noticeAction) {
+          if (!this.isDuplicateLoopNotice(noticeAction, result.response, result.token, result.amount)) {
+            this.addLoopNotice(noticeAction, result.response, result);
+          }
+          return;
+        }
+
+        if (result.action !== "buy" && result.action !== "sell") {
+          this.addSystemMessage(result.response);
+          return;
+        }
         const trade: TradeInfo = {
           token: result.token ?? "unknown",
-          action: result.action as "buy" | "sell",
+          action: result.action,
           amount: result.amount ?? "?",
+          amountUnit: result.amountUnit,
           timestamp: Date.now(),
         };
         this.addTradeMessage(trade);
@@ -1753,6 +1855,26 @@ ${walletLines.join("\n")}
   private addSystemMessage(text: string): void {
     this.setters.addMessage({ id: randomUUID(), type: "system", text, timestamp: Date.now() });
   }
+  private addLoopNotice(
+    action: TuiLoopNoticeAction,
+    text: string,
+    context?: Pick<AgentDecision, "token" | "amount">,
+  ): void {
+    const fingerprint = buildTuiLoopNoticeFingerprint(action, text, context?.token, context?.amount);
+    this.lastLoopNotice = { fingerprint, timestamp: Date.now() };
+    this.addSystemMessage(formatTuiLoopNotice(action, text));
+  }
+  private isDuplicateLoopNotice(
+    action: TuiLoopNoticeAction,
+    text: string,
+    token?: string,
+    amount?: string,
+  ): boolean {
+    if (!this.lastLoopNotice) return false;
+    const now = Date.now();
+    if (now - this.lastLoopNotice.timestamp > LOOP_NOTICE_DEDUPE_MS) return false;
+    return this.lastLoopNotice.fingerprint === buildTuiLoopNoticeFingerprint(action, text, token, amount);
+  }
   private handleLoopError(err: unknown): void {
     if (isGracefulLoopDegradation(err)) {
       const now = Date.now();
@@ -1765,13 +1887,15 @@ ${walletLines.join("\n")}
     this.addErrorMessage(friendlyError(err));
   }
   private addTradeMessage(trade: TradeInfo): void {
+    const unit = trade.amountUnit?.trim() || "units";
     this.setters.addMessage({
       id: randomUUID(),
       type: "trade",
-      text: `${trade.amount} SOL ${trade.action === "buy" ? "\u2192" : "\u2190"} ${trade.token.slice(0, 8)}...`,
+      text: `${trade.amount} ${unit} ${trade.action === "buy" ? "\u2192" : "\u2190"} ${trade.token.slice(0, 8)}...`,
       token: trade.token,
       action: trade.action,
       amount: trade.amount,
+      amountUnit: trade.amountUnit,
       timestamp: Date.now(),
     });
   }

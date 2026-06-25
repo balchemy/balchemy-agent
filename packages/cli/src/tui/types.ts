@@ -11,14 +11,16 @@ export interface ChatMessage {
   token?: string;
   /** For trade messages: buy/sell */
   action?: "buy" | "sell";
-  /** For trade messages: SOL amount */
+  /** For trade messages: amount in the displayed unit */
   amount?: string;
+  amountUnit?: string;
 }
 
 export interface TradeInfo {
   token: string;
   action: "buy" | "sell";
   amount: string;
+  amountUnit?: string;
   entryPrice?: number;
   currentPricePct?: number;
   txSignature?: string;
@@ -31,6 +33,7 @@ export interface TradeConfirmationDetails {
   action: string;
   token: string;
   amount: string;
+  amountUnit?: string;
   chain: string;
   approvalPhrase: string;
   canApprove: boolean;

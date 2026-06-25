@@ -39,6 +39,30 @@ function getSystemMeta(text: string): { label: string; color: TextTone; body: st
     };
   }
 
+  if (text.startsWith("Degraded:")) {
+    return {
+      label: "DEGRADED",
+      color: "yellow",
+      body: text.replace(/^Degraded:\s*/, ""),
+    };
+  }
+
+  if (text.startsWith("Blocked:")) {
+    return {
+      label: "BLOCKED",
+      color: "red",
+      body: text.replace(/^Blocked:\s*/, ""),
+    };
+  }
+
+  if (text.startsWith("Approval required:")) {
+    return {
+      label: "APPROVAL",
+      color: "yellow",
+      body: text.replace(/^Approval required:\s*/, ""),
+    };
+  }
+
   return {
     label: "NOTE",
     color: "white",
@@ -427,7 +451,7 @@ interface ChatPanelProps {
   copyMode?: boolean;
 }
 
-export function ChatPanel({
+function ChatPanelComponent({
   messages,
   onSend,
   inputActive,
@@ -612,3 +636,5 @@ export function ChatPanel({
     </Box>
   );
 }
+
+export const ChatPanel = React.memo(ChatPanelComponent);

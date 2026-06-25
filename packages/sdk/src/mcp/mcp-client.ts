@@ -95,6 +95,33 @@ export type AskBotArgs = {
   chat_id?: string;
 };
 
+export type SafeToolSessionArgs = {
+  chat_id?: string;
+  conversation_id?: string;
+};
+
+export type AgentReadinessReportArgs = {
+  chain?: "solana" | "base" | "ethereum";
+};
+
+export type AgentMarketBriefArgs = SafeToolSessionArgs & {
+  query?: string;
+  chain?: "solana" | "base" | "ethereum";
+  signals?: Array<"launches" | "trending" | "social" | "liquidity">;
+  timeWindowMinutes?: number;
+  limit?: number;
+};
+
+export type AgentAssetReportArgs = SafeToolSessionArgs & {
+  query: string;
+  chain?: "solana" | "base" | "ethereum";
+  includeX?: boolean;
+  includeOnchain?: boolean;
+  includeDevWallets?: boolean;
+  includeHolders?: boolean;
+  maxPosts?: number;
+};
+
 export type AgentSeedRequestArgs = {
   chainId?: number;
   walletAddress?: string;
@@ -389,6 +416,31 @@ export class BalchemyMcpClient {
   /** High-level runtime/auth status endpoint. */
   async agentStatus(): Promise<McpCallToolResponse> {
     return this.callTool("agent_status", {});
+  }
+
+  /** Deterministic readiness/config/source-health diagnosis. */
+  async agentReadinessReport(args: AgentReadinessReportArgs = {}): Promise<McpCallToolResponse> {
+    return this.callTool("agent_readiness_report", args as Record<string, unknown>);
+  }
+
+  /** Safe portfolio/runtime snapshot with source-health caveats. */
+  async agentContextSnapshot(args: SafeToolSessionArgs = {}): Promise<McpCallToolResponse> {
+    return this.callTool("agent_context_snapshot", args as Record<string, unknown>);
+  }
+
+  /** Safe broad market brief for discovery tasks. */
+  async agentMarketBrief(args: AgentMarketBriefArgs = {}): Promise<McpCallToolResponse> {
+    return this.callTool("agent_market_brief", args as Record<string, unknown>);
+  }
+
+  /** Safe report for one specific token, mint, contract, symbol, or name. */
+  async agentCandidateReport(args: AgentAssetReportArgs): Promise<McpCallToolResponse> {
+    return this.callTool("agent_candidate_report", args as unknown as Record<string, unknown>);
+  }
+
+  /** Safe risk report for one specific token, mint, contract, symbol, or name. */
+  async agentRiskReport(args: AgentAssetReportArgs): Promise<McpCallToolResponse> {
+    return this.callTool("agent_risk_report", args as unknown as Record<string, unknown>);
   }
 
   /**

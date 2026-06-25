@@ -245,6 +245,6 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Notes
 
-- Default MCP endpoint exposes 7 tools; full 100-tool catalog requires `MCP_EXPOSE_GRANULAR_TOOLS=true` on the platform
+- Default MCP endpoint exposes high-level agent tools; `MCP_EXPOSE_GRANULAR_TOOLS=true` adds the explicit read-only, non-raw granular Web3 research allowlist for scope-qualified agents.
 - `agent_seed_request` is permanently disabled; `requestSeed()` always throws
 - Minimum Node.js version: 18.0.0

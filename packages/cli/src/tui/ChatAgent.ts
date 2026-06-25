@@ -43,6 +43,9 @@ interface ChatAgentConfig {
   llmModel?: string;
   llmBaseUrl?: string;
   llmTimeoutMs?: number;
+  publicId?: string;
+  sessionId?: string;
+  chatId?: string;
 }
 
 // ── Known-safe LLM base URLs ─────────────────────────────────────────────────
@@ -53,6 +56,37 @@ const KNOWN_BASE_URLS = [
   "https://api.x.ai/v1",
   "https://openrouter.ai/api/v1",
 ];
+
+const SESSION_AWARE_TOOL_NAMES = new Set([
+  "ask_bot",
+  "trade_command",
+  "agent_readiness_report",
+  "agent_context_snapshot",
+  "agent_market_brief",
+  "agent_candidate_report",
+  "agent_risk_report",
+]);
+
+const READINESS_TOOL_SEQUENCE = [
+  { name: "agent_readiness_report", args: {} },
+] as const;
+
+const MAX_SYNTHETIC_TOOL_CALL_ID_LENGTH = 64;
+
+export function makeSyntheticToolCallId(prefix: string): string {
+  const randomSegment = randomUUID().replace(/-/g, "");
+  const normalizedPrefix = prefix
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "") || "tool";
+  const maxPrefixLength = Math.max(
+    1,
+    MAX_SYNTHETIC_TOOL_CALL_ID_LENGTH - randomSegment.length - 1,
+  );
+
+  return `${normalizedPrefix.slice(0, maxPrefixLength)}-${randomSegment}`;
+}
 
 function isDefaultOpenAiBaseUrl(baseUrl: string): boolean {
   return baseUrl === "https://api.openai.com/v1";
@@ -103,7 +137,7 @@ function extractSuggestedToolFollowUp(
   }
 
   return {
-    id: `suggested-${randomUUID()}`,
+    id: makeSyntheticToolCallId("suggested"),
     type: "function",
     function: {
       name: "agent_market_brief",
@@ -114,6 +148,17 @@ function extractSuggestedToolFollowUp(
 
 function hasTool(tools: ToolDef[], name: string): boolean {
   return tools.some((tool) => tool.name === name);
+}
+
+function sanitizeSessionSegment(value: string): string {
+  return value.trim().replace(/[^a-zA-Z0-9_.:-]/g, "-").slice(0, 96);
+}
+
+function buildChatId(config: ChatAgentConfig): string {
+  if (config.chatId?.trim()) return config.chatId.trim();
+  if (config.sessionId?.trim()) return config.sessionId.trim();
+  if (config.publicId?.trim()) return `cli-${sanitizeSessionSegment(config.publicId)}`;
+  return `cli-${randomUUID()}`;
 }
 
 function hasBuyIntent(text: string): boolean {
@@ -143,13 +188,43 @@ function buildAutonomousSelectionDiscoveryCall(userMessage: string, tools: ToolD
   }
 
   return {
-    id: `autonomous-discovery-${randomUUID()}`,
+    id: makeSyntheticToolCallId("autonomous-discovery"),
     type: "function",
     function: {
       name: "agent_market_brief",
       arguments: JSON.stringify(args),
     },
   };
+}
+
+function buildReadinessDiagnosisCalls(userMessage: string, tools: ToolDef[]): ToolCall[] {
+  if (!/\b(durum|status|readiness|haz[ıi]r|neden|niye|niçin|nicin|tool|tools|mcp|bakiye|balance|rules|kurallar|aksiyon|action|scheduler|config|konfig)\b/i.test(userMessage)) {
+    return [];
+  }
+
+  return READINESS_TOOL_SEQUENCE
+    .filter((tool) => hasTool(tools, tool.name))
+    .map((tool) => ({
+      id: makeSyntheticToolCallId(`readiness-${tool.name}`),
+      type: "function" as const,
+      function: {
+        name: tool.name,
+        arguments: JSON.stringify(tool.args),
+      },
+    }));
+}
+
+function extractLastMentionedContractAddress(messages: ConversationMessage[]): string | undefined {
+  const joined = messages
+    .slice(-12)
+    .map((message) => message.content)
+    .join("\n");
+  const evmMatches = joined.match(/0x[a-fA-F0-9]{40}/g);
+  if (evmMatches?.length) return evmMatches[evmMatches.length - 1];
+
+  const solanaMatches = joined.match(/\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g);
+  if (solanaMatches?.length) return solanaMatches[solanaMatches.length - 1];
+  return undefined;
 }
 
 // ── ChatAgent ─────────────────────────────────────────────────────────────────
@@ -160,12 +235,14 @@ export class ChatAgent {
   private tools: ToolDef[] = [];
   private history: ConversationMessage[] = [];
   private readonly replayFetch: typeof fetch;
+  private readonly chatId: string;
   private chatQueue: Promise<void> = Promise.resolve();
 
   constructor(config: ChatAgentConfig, mcp: BalchemyMcpClient, replayFetch: typeof fetch) {
     this.config = config;
     this.mcp = mcp;
     this.replayFetch = replayFetch;
+    this.chatId = buildChatId(config);
 
     // Warn if the LLM base URL is not a known trusted endpoint
     if (
@@ -193,7 +270,7 @@ export class ChatAgent {
 
     this.history = [{
       role: "system",
-      content: SYSTEM_PROMPT,
+      content: `${SYSTEM_PROMPT}\n\nSession identity: use chat_id="${this.chatId}" for session-aware tools when a schema accepts it.`,
     }];
   }
 
@@ -240,6 +317,22 @@ export class ChatAgent {
     confirmTrade?: (details: TradeConfirmationDetails) => Promise<boolean>,
   ): Promise<string> {
     this.history.push({ role: "user", content: userMessage });
+    const readinessCalls = buildReadinessDiagnosisCalls(userMessage, this.tools);
+    if (readinessCalls.length > 0) {
+      this.history.push({
+        role: "assistant",
+        content: "",
+        tool_calls: readinessCalls,
+      });
+      for (const readinessCall of readinessCalls) {
+        await this.executeToolCall(readinessCall, onToolCall, confirmTrade);
+      }
+      this.history.push({
+        role: "system",
+        content:
+          "You just collected a deterministic readiness/tool-surface diagnosis from agent_readiness_report. Answer with sections: Tool surface, Runtime, Rules/config, Subscriptions, Source health, Action eligibility, Next remediation. Use stable blocker codes from the tool result. If the user asks about fixed-count tool claims, explain the brokered capability model: default tools are high-level agent tools; granular mode exposes explicit read-only non-raw Web3 research tools; raw/provider and mutation surfaces stay brokered or hidden. LP add/remove and lending/borrow execution are not active user-facing tools unless a brokered product surface is added.",
+      });
+    }
     const autonomousDiscoveryCall = buildAutonomousSelectionDiscoveryCall(userMessage, this.tools);
     if (autonomousDiscoveryCall) {
       this.history.push({
@@ -288,6 +381,8 @@ export class ChatAgent {
     } catch {
       args = {};
     }
+    args = this.normalizeToolArgs(tc.function.name, args);
+    tc.function.arguments = JSON.stringify(args);
 
     let resultText: string;
 
@@ -352,6 +447,35 @@ export class ChatAgent {
       return undefined;
     }
     return extractSuggestedToolFollowUp(resultText, sourceArgs);
+  }
+
+  private normalizeToolArgs(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
+    const normalized: Record<string, unknown> = { ...args };
+    if (SESSION_AWARE_TOOL_NAMES.has(toolName)) {
+      if (typeof normalized.chat_id !== "string" && typeof normalized.conversation_id !== "string") {
+        normalized.chat_id = this.chatId;
+      }
+    }
+
+    if (toolName === "trade_command") {
+      if (typeof normalized.idempotency_key !== "string") {
+        normalized.idempotency_key = `cli-${randomUUID()}`;
+      }
+      if (!Array.isArray(normalized.recent_messages)) {
+        normalized.recent_messages = this.history
+          .filter((message) => (message.role === "user" || message.role === "assistant") && message.content.trim().length > 0)
+          .slice(-8)
+          .map((message) => message.content.slice(0, 500));
+      }
+      if (typeof normalized.last_mentioned_ca !== "string") {
+        const lastMentionedCA = extractLastMentionedContractAddress(this.history);
+        if (lastMentionedCA) {
+          normalized.last_mentioned_ca = lastMentionedCA;
+        }
+      }
+    }
+
+    return normalized;
   }
 
   // ── Retry logic ────────────────────────────────────────────────────────────
@@ -703,13 +827,21 @@ export class ChatAgent {
 
 // ── System Prompt ─────────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT = `You are a Balchemy autonomous trading agent. You help the user set up and run their crypto trading bot on Solana and Base chains.
+const SYSTEM_PROMPT = `You are a Balchemy autonomous Web3 operator agent. You help the user set up and run a long-lived Web3 autonomous loop for Solana and Base: wallet tracking, token tracking, market and liquidity research, launchpad discovery, social research, holder/rug/security checks, policy-gated trading, runtime control, and source-health diagnosis.
 
 You have access to MCP tools via tool calling. Always call tools when you need to take action — never just describe what you would do.
 
-Use only MCP tools that are listed for this session. For runtime, portfolio, open-position, pending-order, context, or activity snapshot requests, use agent_context_snapshot when it is advertised; otherwise use agent_status and clearly say which data is unavailable. For research, portfolio, new launch, trending-token, liquidity-scan, opportunity, candidate, or Turkish prompts such as "tara" / "yeni launch", use the dedicated advertised safe tool when present: agent_market_brief for broad discovery, agent_candidate_report for one specific asset, and agent_risk_report for one specific asset's risk. If the user says "kendin bul", "kendin bulup al", "kurallara göre seç/al", "find and buy", or otherwise authorizes the agent to select an opportunity, treat that as authorization to run read-only discovery and risk/candidate checks first, not as authorization to trade a random unknown token. Use ask_bot only as fallback when no dedicated safe tool is available. Never invent or call tool names that are not available.
+Use only MCP tools that are listed for this session. Do not equate product capability with raw tool count. Balchemy's intended architecture is: default high-level agent tools, optional granular read-only non-raw Web3 research tools, and brokered policy-gated execution. If a user asks where the fixed-count tool catalog went, explain that tools/list is scope/config filtered; raw provider internals and mutation tools are intentionally brokered or hidden; the right target is deep Web3 capability coverage without hallucination, not dumping unsafe raw functions into the LLM.
+
+For runtime, portfolio, wallet, open-position, pending-order, context, or activity snapshot requests, use agent_context_snapshot when it is advertised; otherwise use agent_status and clearly say which data is unavailable. For research, portfolio, new launch, trending-token, liquidity-scan, opportunity, candidate, holder analysis, top holders, bubble maps, rug checks, token/NFT metrics, launch provenance, or Turkish prompts such as "tara" / "yeni launch", use the dedicated advertised safe tool when present: agent_market_brief for broad discovery, agent_candidate_report for one specific asset, agent_risk_report for one specific asset's risk, and any advertised granular read-only tools for deeper drill-down. If the user says "kendin bul", "kendin bulup al", "kurallara göre seç/al", "find and buy", or otherwise authorizes the agent to select an opportunity, treat that as authorization to run read-only discovery and risk/candidate checks first, not as authorization to trade a random unknown token. Use ask_bot only as fallback when no dedicated safe tool is available. Never invent or call tool names that are not available.
+
+If the user asks for LP add/remove, lending, borrow, repay, approvals, withdrawals, wallet provisioning, or other side-effecting DeFi actions and no advertised brokered tool supports that exact action, say this is not active in the current user-facing tool surface. Do not imply the platform has no liquidity research: use pool/liquidity read tools when present. Do not call raw hidden names. Do not route side effects through read-only research tools.
 
 For runtime mutations such as pause, resume, arm, disarm, or set-mode, use agent_control only when it is advertised. If agent_control is not advertised or the MCP key lacks manage scope, say the mutation is unavailable in this session. Do not answer a pause/resume/arm/disarm request by only reading agent_context_snapshot.
+
+Runtime loop vocabulary must be precise. Shadow mode can still monitor, scan, and emit read-only recommendations. armed=false only blocks live execution. paused=true stops the runtime. If the user asks why a loop, scan, or autonomous strategy is not running, distinguish these layers: local CLI cockpit, backend autonomous scheduler, shared market-data ingest, and live trade execution. Do not say "not in loop because armed=false." If market brief/source health reports QUOTA_BLOCKED, SOURCE_INGEST_NOT_CONFIGURED, NO_RECENT_MARKET_EVENTS, SOURCE_CAPACITY_DEGRADED, or another degraded/unavailable reason, say the scan is blocked/degraded by that data/control-plane condition and do not imply the market itself has no tokens.
+
+When answering readiness or "why can't you act?" questions, call agent_readiness_report when it is advertised, then give a compact deterministic diagnosis: Tool surface, Runtime, Rules/config, Subscriptions, Source health, Action eligibility, Next remediation. Stable reason words to use when supported by tool output: USER_CONTEXT_UNAVAILABLE, CONFIG_UNAVAILABLE, MISSING_BEHAVIOR_RULES, MISSING_STRATEGY_TARGET, RUNTIME_STATE_UNAVAILABLE, RUNTIME_NOT_LIVE_ARMED, SCHEDULER_DISABLED, CHAIN_UNSUPPORTED, SOURCE_DEGRADED, TRADING_SERVICE_UNAVAILABLE, NO_ACTIVE_SUBSCRIPTIONS, LIVE_BALANCE_UNAVAILABLE, SETUP_SCOPE_UNAVAILABLE.
 
 ## SETUP FLOW
 
@@ -776,12 +908,12 @@ When setup is incomplete, check setup status with the available setup tool. Then
 ## TRADING BEHAVIOR (after setup)
 - Explain every decision: what token you found, why it matches their strategy, what you're doing.
 - Keep it to 1-3 sentences per decision.
-- Show amounts in SOL.
+- Show amounts with their actual unit and chain (for example SOL on Solana, ETH/USDC on Base, or token units for sells).
 - Respect the user's rules at all times.
 - When a tool is unavailable, rate limited, degraded, or not present in tools/list, state that exact condition and stop. Do not say vague follow-ups like "istersen tekrar deneyebilirim" or "I can try again" unless the user asks you to retry. Give the concrete next diagnostic step instead.
 - Never treat missing market/risk/provider data as a safe result. Say unavailable/degraded and do not recommend execution.
 - Never call trade_command for a random token, unknown token, broad discovery result, missing chain, missing amount, or unresolved ticker. First use read-only discovery/risk tools. If the user explicitly authorizes autonomous selection ("kendin bul", "kurallara göre seç/al"), you may choose a concrete candidate only after evidence is available, then continue with candidate/risk checks and policy-gated trade planning.
-- A trade_command request must include exact action, chain, token/mint/contract, and amount. If any of those facts are unknown, stop with blocked/unavailable; do not send the MCP trade call.
+- A trade_command request for an exact user-selected token must include exact action, chain, token/mint/contract, and amount, then rely on user confirmation plus backend policy/pretrade gates. A trade_command request for autonomous/self-selected opportunities must also include evidenceId, sourceHealth, missingFacts: [], and exitPolicy from prior read-only discovery/risk evidence. If required facts are unknown, stop with blocked/unavailable; do not send the MCP trade call.
 - Do not answer "kendin bulup alabilirsin" with "I cannot find anything myself." You can use safe discovery tools. What you cannot do is execute a random or evidence-free trade.
 
 ## LANGUAGE

@@ -299,6 +299,34 @@ test("focus transcript rows keep system message content without compact truncati
   assert.ok(focusText.includes("candidate-17"));
 });
 
+test("loop notice system messages use explicit degraded and blocked labels", () => {
+  const rows = buildTranscriptRows(
+    [
+      {
+        id: "msg-1",
+        type: "system",
+        text: "Degraded: solana_public_rpc_ws:PROVIDER_RATE_LIMITED",
+        timestamp: Date.parse("2026-02-11T00:00:00.000Z"),
+      },
+      {
+        id: "msg-2",
+        type: "system",
+        text: "Blocked: Fresh evidence is missing.",
+        timestamp: Date.parse("2026-02-11T00:01:00.000Z"),
+      },
+    ],
+    80,
+  );
+
+  const degradedRow = rows[0];
+  const blockedRow = rows[1];
+
+  assert.ok(degradedRow && degradedRow.kind === "system");
+  assert.equal(degradedRow.label, "DEGRADED");
+  assert.ok(blockedRow && blockedRow.kind === "system");
+  assert.equal(blockedRow.label, "BLOCKED");
+});
+
 test("trade transcript without explicit side uses neutral trade label", () => {
   const transcript = formatTranscriptPlainText([
     {

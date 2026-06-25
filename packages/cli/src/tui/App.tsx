@@ -43,6 +43,46 @@ const INITIAL_STATUS: StatusData = {
   status: "starting",
 };
 
+function sameWallets(left: StatusData["wallets"], right: StatusData["wallets"]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((wallet, index) => {
+    const other = right[index];
+    return other !== undefined && wallet.chain === other.chain && wallet.address === other.address;
+  });
+}
+
+function sameTrades(left: StatusData["activeTrades"], right: StatusData["activeTrades"]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((trade, index) => {
+    const other = right[index];
+    return other !== undefined
+      && trade.token === other.token
+      && trade.action === other.action
+      && trade.amount === other.amount
+      && trade.entryPrice === other.entryPrice
+      && trade.currentPricePct === other.currentPricePct
+      && trade.txSignature === other.txSignature
+      && trade.timestamp === other.timestamp;
+  });
+}
+
+export function sameVisibleStatus(left: StatusData, right: StatusData): boolean {
+  return left.balanceSol === right.balanceSol
+    && left.balanceUsd === right.balanceUsd
+    && left.eventsReceived === right.eventsReceived
+    && left.decisionsExecuted === right.decisionsExecuted
+    && left.tradesExecuted === right.tradesExecuted
+    && left.llmCostToday === right.llmCostToday
+    && left.maxDailyLlmCost === right.maxDailyLlmCost
+    && Math.floor(left.uptime / 1000) === Math.floor(right.uptime / 1000)
+    && left.sseConnected === right.sseConnected
+    && left.status === right.status
+    && left.provider === right.provider
+    && left.model === right.model
+    && sameWallets(left.wallets, right.wallets)
+    && sameTrades(left.activeTrades, right.activeTrades);
+}
+
 // ── Settings definitions ─────────────────────────────────────────────────────
 
 type AppMode = "chat" | "activity-focus" | "help" | "settings-select" | "settings-edit-select" | "settings-edit-text" | "settings-edit-apikey";
@@ -176,6 +216,13 @@ export function App({ config }: AppProps): React.ReactElement {
     addMessage({ id: randomUUID(), type: "error", text, timestamp: Date.now() });
   }, [addMessage]);
 
+  const setVisibleStatus = useCallback((updater: (prev: StatusData) => StatusData) => {
+    setStatus((prev) => {
+      const next = updater(prev);
+      return sameVisibleStatus(prev, next) ? prev : next;
+    });
+  }, []);
+
   const exportActivityLog = useCallback(() => {
     if (messages.length === 0) {
       addSystemMsg("No activity to export.");
@@ -231,7 +278,7 @@ export function App({ config }: AppProps): React.ReactElement {
   // ── Bridge startup ──────────────────────────────────────────────────────
 
   useEffect(() => {
-    const bridge = new AgentBridge(config, { addMessage, setStatus, confirmTrade, setThinking });
+    const bridge = new AgentBridge(config, { addMessage, setStatus: setVisibleStatus, confirmTrade, setThinking });
     bridgeRef.current = bridge;
 
     bridge.start().then(() => {
@@ -254,7 +301,7 @@ export function App({ config }: AppProps): React.ReactElement {
       clearInterval(balanceInterval);
       bridge.stop().catch(() => {});
     };
-  }, [config, addMessage, confirmTrade]);
+  }, [config, addMessage, confirmTrade, setVisibleStatus]);
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────
 
@@ -777,7 +824,7 @@ export function App({ config }: AppProps): React.ReactElement {
           <Box flexDirection="column" marginTop={0}>
             <Text dimColor>Agent {truncateMiddle(config.publicId, 24)}  Host {truncateMiddle(config.mcpEndpoint, Math.max(18, overlayContentWidth - 38))}</Text>
             <Text dimColor>Mode  {config.shadowMode ? "shadow / no live order" : "live-approved / broadcasts only after approval"}</Text>
-            <Text dimColor>Chain {tradeConfirm.details.chain}  Amount {tradeConfirm.details.amount}  Token {truncateMiddle(tradeConfirm.details.token, Math.max(8, overlayContentWidth - 34))}</Text>
+            <Text dimColor>Chain {tradeConfirm.details.chain}  Amount {tradeConfirm.details.amount} {tradeConfirm.details.amountUnit ?? "units"}  Token {truncateMiddle(tradeConfirm.details.token, Math.max(8, overlayContentWidth - 34))}</Text>
           </Box>
           <Box marginTop={0} flexDirection="column">
             <Text color="yellow" bold>Approve only if agent, host, chain, token and amount all match your intent.</Text>

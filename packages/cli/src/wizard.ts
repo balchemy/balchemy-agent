@@ -19,6 +19,7 @@ import { createRequire } from "module";
 import { renderLogo } from "./terminal-logo.js";
 import { saveAgent } from "./agent-store.js";
 import { openBrowser } from "./browser.js";
+import { assertSafeInitDirectory } from "./init-target.js";
 
 const require = createRequire(import.meta.url);
 const CLI_VERSION = (require("../package.json") as { version?: string }).version ?? "unknown";
@@ -550,6 +551,8 @@ function generateDotEnv(r: WizardResult): string {
 // ── Main Wizard ───────────────────────────────────────────────────────────────
 
 export async function runWizard(outDir: string): Promise<void> {
+  assertSafeInitDirectory(outDir);
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -595,9 +598,18 @@ export async function runWizard(outDir: string): Promise<void> {
     printInfo(`${D}${provider.keyUrl}${R}`);
     printInfo("Copy your API key and paste it below.\n");
 
+    // BYO-key guidance (audit P1-10): never leave a key-less user at a dead
+    // end — explain what the key is for, what it costs, and the alternatives.
+    printInfo(`${D}No API key yet? The key powers your agent's own reasoning — typical light`);
+    printInfo(`usage costs well under a few dollars/day, and you set a daily cost cap next.`);
+    printInfo(`Cheapest start: OpenRouter (restart and pick it as provider). Prefer the`);
+    printInfo(`browser instead? Use the web app at https://balchemy.ai${R}\n`);
+
     llmApiKey = await askSecret(rl, "Paste your API key");
     if (!llmApiKey) {
-      printError("API key is required.");
+      printError("API key is required for the CLI cockpit.");
+      printInfo(`Get one at ${provider.keyUrl} and run \`npx balchemy\` again,`);
+      printInfo("or start from the web app at https://balchemy.ai instead.");
       rl.close();
       process.exit(1);
     }
@@ -775,6 +787,12 @@ export async function runWizard(outDir: string): Promise<void> {
       { label: "Model", value: model.label },
       { label: "Mode", value: shadowMode ? "Shadow" : "LIVE" },
     ], "success");
+    if (shadowMode) {
+      // Shadow-first framing (audit P1-7): set the expectation explicitly.
+      printInfo(`${D}Shadow mode: your agent watches and records what it WOULD trade under`);
+      printInfo(`your rules — nothing is funded or executed. Review its decisions first;`);
+      printInfo(`arm live trading deliberately when you're comfortable.${R}\n`);
+    }
     printInfo("Starting the live cockpit...\n");
 
     // Auto-start TUI — no extra step needed

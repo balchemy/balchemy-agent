@@ -65,6 +65,8 @@ export interface AgentLoopConfig {
   maxConsecutiveFailures?: number;
   /** Shadow mode defaults to true unless explicitly set false by an approved flow. */
   shadowMode?: boolean;
+  /** Stable SDK/local-runner session id used for MCP chat_id continuity. */
+  sessionId?: string;
   /** Callback: event received */
   onEvent?: (event: AgentEvent) => void;
   /** Callback: decision made */
@@ -73,8 +75,8 @@ export interface AgentLoopConfig {
   onError?: (error: Error) => void;
   /** Callback: status changed */
   onStatusChange?: (status: AgentStatus) => void;
-  /** Callback: trade result or shadow-mode non-execution notice */
-  onTradeResult?: (result: { action: string; token?: string; amount?: string; response: string }) => void;
+  /** Callback: submitted trade result or non-executing lifecycle notice. */
+  onTradeResult?: (result: { action: string; token?: string; amount?: string; amountUnit?: string; response: string }) => void;
 }
 
 /** Lightweight runtime snapshot returned by the exposed agent_status MCP tool. */
@@ -96,12 +98,28 @@ export interface AgentEvent {
   source: 'sse' | 'webhook';
 }
 
+export type AgentDecisionAction =
+  | 'buy'
+  | 'sell'
+  | 'hold'
+  | 'blocked'
+  | 'degraded'
+  | 'approval_required';
+
 export interface AgentDecision {
-  action: string;
+  action: AgentDecisionAction;
   token?: string;
   amount?: string;
+  amountUnit?: string;
+  chain?: string;
   reasoning?: string;
   confidence?: number;
+  evidenceId?: string;
+  sourceHealth?: Record<string, unknown> | Array<Record<string, unknown>>;
+  amountSource?: string;
+  exitPolicy?: string | Record<string, unknown>;
+  missingFacts?: string[];
+  requiredApprovals?: string[];
   ruleCorrection?: {
     original: string;
     corrected: string;

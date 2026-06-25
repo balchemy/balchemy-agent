@@ -113,7 +113,7 @@ export function StatusPanel({
   const panelWidth = Math.max(18, width);
   const contentWidth = Math.max(6, panelWidth - 4);
   const spendWidth = Math.min(compact ? 12 : 16, Math.max(8, contentWidth));
-  const isLowBalance = status.balanceSol < 0.01;
+  const isLowBalance = status.balanceUsd > 0 ? status.balanceUsd < 10 : status.balanceSol < 0.01;
   const sessionBadge = getSessionBadge(status);
   const shortLayout = height !== undefined && height < 22;
   const walletRows = selectWalletRows(status.wallets, 2);
@@ -123,7 +123,7 @@ export function StatusPanel({
   const providerText = status.provider
     ? fitText(`${status.provider} / ${status.model ?? "default"}`, contentWidth)
     : fitText("provider pending", contentWidth);
-  const capitalText = fitText(`${status.balanceSol.toFixed(4)} SOL  $${status.balanceUsd.toFixed(2)}`, contentWidth);
+  const capitalText = fitText(`$${status.balanceUsd.toFixed(2)} total  ${status.balanceSol.toFixed(4)} SOL`, contentWidth);
   const lowBalanceText = fitText("Fund before live", contentWidth);
   const runtimeText = fitText(`E ${status.eventsReceived}  D ${status.decisionsExecuted}  T ${status.tradesExecuted}`, contentWidth);
   const runtimeWithUptime = fitText(`E ${status.eventsReceived}  D ${status.decisionsExecuted}  T ${status.tradesExecuted}  ${formatUptime(status.uptime)}`, contentWidth);

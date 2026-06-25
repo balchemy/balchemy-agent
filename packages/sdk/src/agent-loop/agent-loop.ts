@@ -1,4 +1,5 @@
 import { SseEventStream } from '../streaming/sse-event-stream';
+import { randomUUID } from 'node:crypto';
 import type { SseEvent } from '../streaming/sse-event-stream';
 import { BalchemyMcpClient, connectMcp, parseToolJson } from '../mcp/mcp-client';
 import { LlmCostTracker } from './llm-cost-tracker';
@@ -10,6 +11,7 @@ import { ModelRouter } from './model-router';
 import { TelemetryReporter } from './telemetry-reporter';
 import { checkAllRules } from './rule-checker';
 import type { BehaviorRuleLimits } from './rule-checker';
+import type { McpCallToolResponse } from '../types';
 import type {
   AgentLoopConfig,
   AgentStatus,
@@ -74,6 +76,289 @@ function isRuntimePaused(snapshot: AgentPortfolioSnapshot): boolean {
   return runtime?.paused === true || runtime?.mode === 'paused';
 }
 
+function hasRuntimeStatusSnapshot(snapshot: AgentPortfolioSnapshot): boolean {
+  const runtimeStatus = asRecord(snapshot.runtimeStatus);
+  return Boolean(runtimeStatus && Object.keys(runtimeStatus).length > 0);
+}
+
+type SupportedTradeChain = 'solana' | 'base' | 'ethereum';
+
+type ExecutableDecisionValidation =
+  | { allowed: true; chain: SupportedTradeChain; amountUnit: string }
+  | { allowed: false; action: 'blocked' | 'degraded' | 'approval_required'; reason: string };
+
+const VALID_AMOUNT_SOURCES = new Set(['rules', 'config', 'explicit_user']);
+const GOOD_SOURCE_HEALTH_VALUES = new Set([
+  'available',
+  'fresh',
+  'healthy',
+  'ok',
+]);
+const BAD_SOURCE_HEALTH_VALUES = new Set([
+  'blocked',
+  'degraded',
+  'error',
+  'failed',
+  'failing',
+  'no_data',
+  'quota_blocked',
+  'rate_limited',
+  'stale',
+  'unavailable',
+  'unknown',
+]);
+
+function normalizeTradeChain(chain: string | undefined): SupportedTradeChain | null {
+  const normalized = chain?.trim().toLowerCase();
+  if (normalized === 'solana' || normalized === 'sol') return 'solana';
+  if (normalized === 'base') return 'base';
+  if (normalized === 'ethereum' || normalized === 'eth') return 'ethereum';
+  return null;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isNonEmptyObject(value: unknown): boolean {
+  const record = asRecord(value);
+  return Boolean(record && Object.keys(record).length > 0);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function hasExitPolicy(value: unknown): boolean {
+  return isNonEmptyString(value) || isNonEmptyObject(value);
+}
+
+function sourceHealthIsUsable(value: unknown): boolean {
+  const initialRecords = Array.isArray(value)
+    ? value.map(asRecord).filter((item): item is Record<string, unknown> => item !== null)
+    : [asRecord(value)].filter((item): item is Record<string, unknown> => item !== null);
+  if (initialRecords.length === 0 || initialRecords.some((record) => Object.keys(record).length === 0)) {
+    return false;
+  }
+  let sawPositiveHealthSignal = false;
+
+  const stack: Record<string, unknown>[] = [...initialRecords];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) {
+      continue;
+    }
+    if (current.ok === false || current.degraded === true || current.unavailable === true) {
+      return false;
+    }
+    if (current.ok === true) {
+      sawPositiveHealthSignal = true;
+    }
+    for (const key of ['status', 'state', 'health', 'sourceStatus']) {
+      const raw = current[key];
+      if (typeof raw !== 'string') {
+        continue;
+      }
+      const normalized = raw.trim().toLowerCase();
+      if (BAD_SOURCE_HEALTH_VALUES.has(normalized)) {
+        return false;
+      }
+      if (GOOD_SOURCE_HEALTH_VALUES.has(normalized)) {
+        sawPositiveHealthSignal = true;
+      }
+    }
+    for (const key of ['sources', 'sourceHealth', 'source_health', 'providers', 'sourceStatuses']) {
+      const nested = current[key];
+      if (Array.isArray(nested)) {
+        stack.push(...nested.map(asRecord).filter((item): item is Record<string, unknown> => item !== null));
+        continue;
+      }
+      const nestedRecord = asRecord(nested);
+      if (nestedRecord) {
+        stack.push(nestedRecord);
+        stack.push(...Object.values(nestedRecord).map(asRecord).filter((item): item is Record<string, unknown> => item !== null));
+      }
+    }
+  }
+
+  return sawPositiveHealthSignal;
+}
+
+function validateExecutableTradeDecision(decision: AgentDecision): ExecutableDecisionValidation {
+  if (!isNonEmptyString(decision.token)) {
+    return { allowed: false, action: 'blocked', reason: 'decision is missing exact token' };
+  }
+  if (!isNonEmptyString(decision.amount)) {
+    return { allowed: false, action: 'blocked', reason: 'decision is missing exact amount' };
+  }
+  if (!/^\d+(?:\.\d+)?$/.test(decision.amount.trim())) {
+    return { allowed: false, action: 'blocked', reason: 'decision amount must be numeric without a unit suffix' };
+  }
+  if (!Number.isFinite(Number.parseFloat(decision.amount)) || Number.parseFloat(decision.amount) <= 0) {
+    return { allowed: false, action: 'blocked', reason: 'decision amount is not a positive number' };
+  }
+  if (!isNonEmptyString(decision.amountUnit)) {
+    return { allowed: false, action: 'blocked', reason: 'decision is missing amount unit' };
+  }
+  const chain = normalizeTradeChain(decision.chain);
+  if (!chain) {
+    return { allowed: false, action: 'blocked', reason: 'decision is missing an explicit supported chain' };
+  }
+  if (!isNonEmptyString(decision.amountSource) || !VALID_AMOUNT_SOURCES.has(decision.amountSource.trim())) {
+    return { allowed: false, action: 'blocked', reason: 'decision amount source is missing or unsupported' };
+  }
+  if (!isNonEmptyString(decision.evidenceId)) {
+    return { allowed: false, action: 'blocked', reason: 'decision is missing evidence id' };
+  }
+  if (!sourceHealthIsUsable(decision.sourceHealth)) {
+    return { allowed: false, action: 'degraded', reason: 'source health is missing or degraded' };
+  }
+  if (!isStringArray(decision.missingFacts)) {
+    return { allowed: false, action: 'blocked', reason: 'missingFacts must be an explicit array' };
+  }
+  if (decision.missingFacts.length > 0) {
+    return { allowed: false, action: 'blocked', reason: `decision has missing facts: ${decision.missingFacts.join(', ')}` };
+  }
+  if (Array.isArray(decision.requiredApprovals) && decision.requiredApprovals.length > 0) {
+    return { allowed: false, action: 'approval_required', reason: `required approvals: ${decision.requiredApprovals.join(', ')}` };
+  }
+  if (!hasExitPolicy(decision.exitPolicy)) {
+    return { allowed: false, action: 'blocked', reason: 'decision is missing exit policy' };
+  }
+  if (decision.action === 'buy' && decision.token.trim().toLowerCase() === decision.amountUnit.trim().toLowerCase()) {
+    return { allowed: false, action: 'blocked', reason: 'buy target token matches spend unit' };
+  }
+
+  return { allowed: true, chain, amountUnit: decision.amountUnit.trim() };
+}
+
+function buildTradeCommandMessage(
+  decision: AgentDecision,
+  chain: SupportedTradeChain,
+  amountUnit: string,
+): string {
+  return `${decision.action} ${decision.amount} ${amountUnit} ${decision.token} on ${chain}`.trim();
+}
+
+function getToolResponseText(response: McpCallToolResponse): string {
+  return response.content?.find((content) => content.type === 'text')?.text ?? '';
+}
+
+function getStringFromRecord(record: Record<string, unknown> | null, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function getPlainResponseStatusText(responseText: string): string | undefined {
+  const trimmed = responseText.trim();
+  if (!trimmed || trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+function hasAnyKey(record: Record<string, unknown> | null, keys: string[]): boolean {
+  if (!record) {
+    return false;
+  }
+  return keys.some((key) => record[key] !== undefined && record[key] !== null);
+}
+
+function hasBroadcastReference(record: Record<string, unknown> | null, depth = 0): boolean {
+  if (!record || depth > 3) {
+    return false;
+  }
+  if (hasAnyKey(record, [
+    'transactionHash',
+    'transaction_hash',
+    'txHash',
+    'tx_hash',
+    'signature',
+  ])) {
+    return true;
+  }
+  for (const key of ['order', 'data', 'result', 'execution', 'transaction']) {
+    const nested = asRecord(record[key]);
+    if (nested && hasBroadcastReference(nested, depth + 1)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function collectTradeStatusText(record: Record<string, unknown> | null, depth = 0): string[] {
+  if (!record || depth > 3) {
+    return [];
+  }
+  const values = [
+    getStringFromRecord(record, 'status'),
+    getStringFromRecord(record, 'state'),
+    getStringFromRecord(record, 'orderStatus'),
+    getStringFromRecord(record, 'message'),
+  ].filter((value): value is string => Boolean(value));
+  const requiresAction = asRecord(record.requiresAction);
+  if (requiresAction) {
+    values.push(...[
+      getStringFromRecord(requiresAction, 'type'),
+      getStringFromRecord(requiresAction, 'reason'),
+      getStringFromRecord(requiresAction, 'message'),
+    ].filter((value): value is string => Boolean(value)));
+  }
+  for (const key of ['order', 'data', 'result', 'execution', 'transaction']) {
+    values.push(...collectTradeStatusText(asRecord(record[key]), depth + 1));
+  }
+  return values;
+}
+
+function getTradeCommandResult(response: McpCallToolResponse): Record<string, unknown> | null {
+  const parsed = parseToolJson<Record<string, unknown>>(response);
+  const structured = asRecord(parsed?.structured);
+  return asRecord(structured?.result) ?? asRecord(parsed?.result);
+}
+
+function classifyTradeCommandOutcome(
+  response: McpCallToolResponse,
+  decision: AgentDecision,
+): { submitted: true; responseText: string } | { submitted: false; action: 'blocked' | 'degraded' | 'approval_required'; responseText: string } {
+  const responseText = getToolResponseText(response);
+  const result = getTradeCommandResult(response);
+  const statusText = [
+    ...collectTradeStatusText(result),
+    getPlainResponseStatusText(responseText),
+  ].filter((value): value is string => Boolean(value)).join(' ').toLowerCase();
+
+  if (/\b(?:not|never|no)\s+(?:accepted|broadcast|confirmed|executed|filled|submitted)\b/.test(statusText)
+    || /\bdid\s+not\s+(?:accept|broadcast|confirm|execute|fill|submit)\b/.test(statusText)
+    || /\bnot\s+confirmed\b/.test(statusText)) {
+    return { submitted: false, action: 'blocked', responseText };
+  }
+  if (/\b(approval|approve|confirm|confirmation|pending_approval)\b/.test(statusText)) {
+    return { submitted: false, action: 'approval_required', responseText };
+  }
+  if (result?.requiresAction === true || asRecord(result?.requiresAction) !== null) {
+    return { submitted: false, action: 'approval_required', responseText };
+  }
+  if (/\b(degraded|unavailable|rate[_ -]?limited|quota)\b/.test(statusText)) {
+    return { submitted: false, action: 'degraded', responseText };
+  }
+  if (response.isError === true || result?.success === false || /\b(blocked|denied|disabled|failed|failure|rejected|error)\b/.test(statusText)) {
+    return { submitted: false, action: 'blocked', responseText };
+  }
+
+  const accepted = hasBroadcastReference(result)
+    || /\b(accepted|executed|submitted|broadcast|filled|confirmed)\b/.test(statusText);
+  if (accepted && decision.action !== 'hold') {
+    return { submitted: true, responseText };
+  }
+
+  const fallbackText = responseText || 'trade_command did not confirm a submitted or executed order.';
+  return {
+    submitted: false,
+    action: 'blocked',
+    responseText: fallbackText,
+  };
+}
+
 export class AgentLoop {
   private readonly config: AgentLoopConfig;
   private readonly sseEndpoint: string;
@@ -109,6 +394,7 @@ export class AgentLoop {
 
   /** publicId extracted from the MCP endpoint path (last path segment). */
   private readonly publicId: string;
+  private readonly sessionId: string;
 
   constructor(config: AgentLoopConfig) {
     this.config = config;
@@ -117,6 +403,7 @@ export class AgentLoop {
 
     // Extract publicId from endpoint (last path segment after filtering empty segments)
     this.publicId = config.mcpEndpoint.split('/').filter(Boolean).pop() ?? '';
+    this.sessionId = config.sessionId ?? `sdk-${this.publicId || randomUUID()}`;
 
     this.costTracker = new LlmCostTracker({
       maxDailyUsd: config.maxDailyLlmCost ?? 5,
@@ -235,7 +522,10 @@ export class AgentLoop {
    */
   async sendMessage(message: string): Promise<string> {
     try {
-      const response = await this.mcp.callTool('ask_bot', { message });
+      const response = await this.mcp.callTool('ask_bot', {
+        message,
+        chat_id: this.sessionId,
+      });
       const text = response.content?.find(
         (c: { type: string; text?: string }) => c.type === 'text',
       )?.text ?? '';
@@ -294,6 +584,13 @@ export class AgentLoop {
   private async processEvent(event: AgentEvent): Promise<void> {
     try {
       const portfolio = await this.fetchPortfolio();
+      if (!hasRuntimeStatusSnapshot(portfolio)) {
+        this.config.onTradeResult?.({
+          action: 'degraded',
+          response: 'Degraded: agent_status is unavailable or missing runtime state; LLM decision skipped and trade_command was not called.',
+        });
+        return;
+      }
       if (isRuntimePaused(portfolio)) {
         this.config.onTradeResult?.({
           action: 'hold',
@@ -302,6 +599,13 @@ export class AgentLoop {
         return;
       }
       const compressedRules = await this.fetchBehaviorRules();
+      if (!compressedRules.trim()) {
+        this.config.onTradeResult?.({
+          action: 'blocked',
+          response: 'Blocked: behavior rules are unavailable or empty; LLM decision skipped and trade_command was not called.',
+        });
+        return;
+      }
 
       // Apply model routing if configured
       let selectedModel: string | null = null;
@@ -320,9 +624,14 @@ export class AgentLoop {
       }
 
       const llmCallStart = Date.now();
+      const portfolioValue = portfolio.totalValueUsd ?? portfolio.totalValueSol ?? 0;
+      const portfolioValueUnit = portfolio.totalValueUsd !== undefined
+        ? 'USD'
+        : portfolio.totalValueSol !== undefined ? 'SOL' : 'unknown unit';
       const decision = await this.decisionHandler.handleEvent(event, {
         compressedRules,
-        portfolioValue: portfolio.totalValueSol ?? 0,
+        portfolioValue,
+        portfolioValueUnit,
         portfolioSummary: portfolio.summary,
       });
       const llmLatencyMs = Date.now() - llmCallStart;
@@ -352,11 +661,40 @@ export class AgentLoop {
         reasoning: decision.reasoning,
       });
 
+      if (
+        decision.action === 'blocked'
+        || decision.action === 'degraded'
+        || decision.action === 'approval_required'
+      ) {
+        this.config.onTradeResult?.({
+          action: decision.action,
+          token: decision.token,
+          amount: decision.amount,
+          response: decision.reasoning ?? `Decision ${decision.action}: trade_command was not called.`,
+        });
+        return;
+      }
+
       // Execute via MCP only when the caller explicitly opted out of shadow mode.
       if (decision.action === 'buy' || decision.action === 'sell') {
+        const executableDecision = validateExecutableTradeDecision(decision);
+        if (!executableDecision.allowed) {
+          const prefix = executableDecision.action === 'degraded'
+            ? 'Degraded'
+            : executableDecision.action === 'approval_required'
+              ? 'Approval required'
+              : 'Blocked';
+          this.config.onTradeResult?.({
+            action: executableDecision.action,
+            token: decision.token,
+            amount: decision.amount,
+            response: `${prefix}: ${executableDecision.reason}; trade_command was not called.`,
+          });
+          return;
+        }
         if (this.config.shadowMode !== false) {
           this.config.onTradeResult?.({
-            action: decision.action,
+            action: 'shadow',
             token: decision.token,
             amount: decision.amount,
             response: 'Shadow mode: trade_command was not called.',
@@ -367,7 +705,7 @@ export class AgentLoop {
         const executionSnapshot = await this.fetchPortfolio(true);
         if (!isRuntimeLiveArmed(executionSnapshot)) {
           this.config.onTradeResult?.({
-            action: decision.action,
+            action: 'blocked',
             token: decision.token,
             amount: decision.amount,
             response: 'Runtime not armed: backend autonomous_runtime is not live_armed; trade_command was not called.',
@@ -393,23 +731,46 @@ export class AgentLoop {
           return;
         }
 
-        const tradeMessage = `${decision.action} ${decision.amount ?? ''} SOL ${decision.token ?? ''}`.trim();
+        const tradeMessage = buildTradeCommandMessage(
+          decision,
+          executableDecision.chain,
+          executableDecision.amountUnit,
+        );
         const tradeResponse = await this.mcp.callTool('trade_command', {
           message: tradeMessage,
+          chat_id: this.sessionId,
+          idempotency_key: `sdk-${event.id ?? randomUUID()}`,
+          autonomous: true,
+          requiresEvidence: true,
+          evidenceId: decision.evidenceId,
+          sourceHealth: decision.sourceHealth,
+          missingFacts: decision.missingFacts,
+          requiredApprovals: decision.requiredApprovals ?? [],
+          exitPolicy: decision.exitPolicy,
+          amountUnit: executableDecision.amountUnit,
+          amountSource: decision.amountSource,
         });
-        this.tradesExecuted++;
-        this.tradesThisHour++;
-        this.lastTradeAt = Date.now();
+        const tradeOutcome = classifyTradeCommandOutcome(tradeResponse, decision);
+        if (tradeOutcome.submitted) {
+          this.tradesExecuted++;
+          this.tradesThisHour++;
+          this.lastTradeAt = Date.now();
+          this.config.onTradeResult?.({
+            action: decision.action,
+            token: decision.token,
+            amount: decision.amount,
+            amountUnit: executableDecision.amountUnit,
+            response: tradeOutcome.responseText,
+          });
+          return;
+        }
 
-        // Fire trade result callback
-        const resultText = tradeResponse.content?.find(
-          (c: { type: string; text?: string }) => c.type === 'text',
-        )?.text ?? '';
         this.config.onTradeResult?.({
-          action: decision.action,
+          action: tradeOutcome.action,
           token: decision.token,
           amount: decision.amount,
-          response: resultText,
+          amountUnit: executableDecision.amountUnit,
+          response: tradeOutcome.responseText,
         });
       }
     } catch (err: unknown) {

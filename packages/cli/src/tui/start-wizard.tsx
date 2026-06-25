@@ -5,8 +5,10 @@ import { Wizard } from "./Wizard.js";
 import { startTui } from "./start.js";
 import type { TuiConfig } from "./types.js";
 import { enterInteractiveScreen, leaveInteractiveScreen } from "./terminal-session.js";
+import { assertSafeInitDirectory } from "../init-target.js";
 
 export async function startWizard(outDir: string): Promise<void> {
+  assertSafeInitDirectory(outDir);
   enterInteractiveScreen();
 
   return new Promise<void>((resolve) => {
