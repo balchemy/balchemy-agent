@@ -1,0 +1,2329 @@
+{
+  "meta": {
+    "projectName": "Balchemy",
+    "scope": "cli-tui-ux-only",
+    "generatedFor": "Balchemy CLI/TUI",
+    "version": "1.0",
+    "createdAt": "2026-05-24",
+    "primaryPackage": "create-balchemy-agent",
+    "primaryBins": [
+      "balchemy",
+      "create-balchemy-agent",
+      "balchemy-agent"
+    ],
+    "doesNotTouch": [
+      "web-ui",
+      "dashboard",
+      "browser-frontend",
+      "landing-page",
+      "marketing-components",
+      "balchemy-frontend-v2",
+      "frontend-routes",
+      "browser-responsive-design",
+      "web-color-redesign"
+    ],
+    "assumptions": [
+      "The published terminal product surface is the create-balchemy-agent package exposed as npx balchemy.",
+      "The existing Ink cockpit remains the correct foundation for live interactive agent sessions.",
+      "Simple inspection, listing, config, doctor, and CI workflows should remain plain CLI commands rather than full-screen TUI flows.",
+      "Future validation commands must run in approved container, VPS, or CI contexts because local host pnpm/npm/node/build/test execution is disallowed by project instructions.",
+      "This spec is an implementation input; it does not itself authorize production trades, wallet provisioning, key rotation, or deployment actions."
+    ],
+    "unknowns": [
+      "Whether create-balchemy-agent/src/wizard.ts is still reachable in published builds or only retained as a fallback reference.",
+      "Whether the public CLI roadmap wants separate balchemy auth/config/profile commands or prefers wizard-only onboarding in the short term.",
+      "Whether package consumers rely on current exact stdout strings from balchemy list or balchemy docker.",
+      "Whether future machine-readable output should be strict JSON only or support NDJSON event streams for long-running commands.",
+      "Whether a future explicit update-check command is worth adding now that interactive launch no longer checks the npm registry."
+    ]
+  },
+  "researchBasis": {
+    "modernCliPrinciples": [
+      "Discoverability: every command should have concise help, concrete examples, and typo suggestions.",
+      "Consistency: shared global flags, shared output formatting, shared error structure, and predictable stdout/stderr separation.",
+      "Composability: read-only commands should be pipe-friendly, deterministic, and support --json for automation.",
+      "Safe defaults: prompts must not default to destructive, financial, credential, overwrite, global-install, or production actions.",
+      "Human-readable plus machine-readable: default output should be calm and scan-friendly; --json should be stable and schema-backed.",
+      "Progressive disclosure: common commands stay short; advanced/internal/debug behavior is reachable but not noisy.",
+      "Clear recovery paths: errors explain cause, next command, docs/help hint, and exit code.",
+      "Non-interactive readiness: CI must never hang on prompts and must fail closed when required inputs are missing."
+    ],
+    "modernTuiPrinciples": [
+      "Keyboard-first navigation with visible shortcut footer and consistent Escape/back/cancel behavior.",
+      "Explicit focus state for select, text input, settings edit, and dangerous confirmation surfaces.",
+      "Structured panes: header for identity/context, main pane for activity, side/status pane for operational state, overlay for modal actions.",
+      "Progressive disclosure: live cockpit shows essentials first and keeps detailed logs/settings behind overlays.",
+      "Responsive terminal layout: compact mode below narrow width, robust truncation, no overflow boxes, and predictable wrapping.",
+      "Accessible output: no state conveyed by color alone, no mandatory emoji, no-color fallback, copy-paste-friendly text.",
+      "Terminal compatibility: TTY checks before alternate screen, no-color and TERM=dumb support, deterministic output in non-TTY/CI."
+    ],
+    "benchmarksConsidered": [
+      "GitHub CLI for noun/verb command taxonomy, readable help, --json support, and actionable errors.",
+      "Vercel CLI for fast onboarding, project/context clarity, and deployment preview language.",
+      "Supabase CLI for local/config/project workflows and CI-friendly command behavior.",
+      "Stripe CLI for auth clarity, explicit account context, event/log streaming, and copy-pasteable recovery commands.",
+      "Docker CLI for command grouping, inspect/list/log patterns, and machine-readable modes.",
+      "Terraform CLI for plan/apply separation, dry-run previews, and destructive confirmation semantics.",
+      "Fly.io CLI for concise app context, deploy safety prompts, and remote resource naming clarity.",
+      "Linear-style command palette for fast keyboard-driven actions inside a focused TUI.",
+      "Charm/Bubble Tea and Ink patterns for terminal layouts, keyboard navigation, and componentized TUI states.",
+      "Rich/Textual patterns for tables, panels, progress, and structured error panels."
+    ],
+    "patternsToAdopt": [
+      "Use noun-based top-level command groups for durable surfaces: agent, config, auth, context, docker, doctor, tui.",
+      "Keep common flows short: balchemy, balchemy init, balchemy start, balchemy list.",
+      "Add stable global flags: --json, --quiet, --verbose, --debug, --ci, --no-color.",
+      "Add dry-run/preview to file-writing and execution-adjacent commands: init, docker, future config writes, and risky agent actions.",
+      "Separate human stdout, machine stdout, and diagnostics stderr.",
+      "Render errors with title, cause, fix, suggested command, docs/help hint, exit code, and debug-only technical details.",
+      "Show active agent/context/model/mode in every interactive session header and every risky confirmation.",
+      "Use existing create-balchemy-agent/src/tui/text-layout.ts helpers as the terminal width foundation.",
+      "Use existing create-balchemy-agent/src/colors.ts behavior for no-color, TERM=dumb, non-TTY, and --no-color.",
+      "Create terminal golden tests and JSON schema tests before broad UX refactor."
+    ],
+    "patternsToAvoid": [
+      "Do not move CLI/TUI logic into web dashboard or browser frontend surfaces.",
+      "Do not make TUI mandatory for simple list/status/config commands.",
+      "Do not default yes for updates, overwrites, live execution, production context actions, or credential writes.",
+      "Do not print raw secrets, seed phrases, MCP keys, LLM API keys, wallet private keys, or full credential-bearing URLs.",
+      "Do not rely on color alone for success, warning, danger, focus, or selection state.",
+      "Do not use emoji-only or Unicode-only state symbols without ASCII fallback.",
+      "Do not emit spinners, progress redraws, or alternate-screen controls in non-TTY/CI output.",
+      "Do not expose hidden/internal MCP tool names as required user knowledge.",
+      "Do not add plan/tier/subscription/enterprise CLI concepts."
+    ]
+  },
+  "repoDiscovery": {
+    "cliEntrypoints": [
+      {
+        "path": "create-balchemy-agent/package.json",
+        "kind": "npm-package-bin",
+        "details": "Defines bin names balchemy, create-balchemy-agent, and balchemy-agent, all mapped to dist/index.js."
+      },
+      {
+        "path": "create-balchemy-agent/src/index.ts",
+        "kind": "node-cli-entrypoint",
+        "details": "Shebang CLI entrypoint with hand-rolled process.argv parsing and commands: default launcher, init, start, docker, list, help, version, no-color."
+      },
+      {
+        "path": "create-balchemy-agent/src/runner.ts",
+        "kind": "terminal-runner-helper",
+        "details": "Legacy/headless runner with [agent] stdout/stderr messages; should align with future output/error standards."
+      }
+    ],
+    "tuiEntrypoints": [
+      {
+        "path": "create-balchemy-agent/src/tui/start.tsx",
+        "kind": "ink-cockpit-launcher",
+        "details": "Enters alternate screen on TTY and renders App."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/start-wizard.tsx",
+        "kind": "ink-wizard-launcher",
+        "details": "Launches Ink setup wizard from CLI default/init flows."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/App.tsx",
+        "kind": "main-tui-cockpit",
+        "details": "Live terminal cockpit with header context, Activity panel, StatusPanel, settings overlays, shortcut footer, and TRADE CHECK confirmation overlay."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/Wizard.tsx",
+        "kind": "setup-wizard-tui",
+        "details": "Ink onboarding wizard for provider key, model, daily LLM cost, new/existing agent setup, config file generation, and TUI launch."
+      }
+    ],
+    "commandFiles": [
+      {
+        "path": "create-balchemy-agent/src/index.ts",
+        "commands": [
+          "balchemy",
+          "balchemy init",
+          "balchemy start [config]",
+          "balchemy docker [outDir]",
+          "balchemy list",
+          "balchemy --help",
+          "balchemy --version",
+          "balchemy --no-color"
+        ],
+        "gaps": [
+          "No --json",
+          "No --quiet",
+          "No --verbose",
+          "No --debug",
+          "No --ci",
+          "No --dry-run",
+          "No explicit auth/config/context/doctor command groups"
+        ]
+      },
+      {
+        "path": "create-balchemy-agent/src/docker-gen.ts",
+        "commands": [
+          "balchemy docker [outDir]"
+        ],
+        "gaps": [
+          "No dry-run/preview mode",
+          "No overwrite confirmation for Dockerfile/docker-compose.yml",
+          "Likely .env.example destination bug because copyTemplate('.env.example', envExampleDest) treats a file path as outDir"
+        ]
+      },
+      {
+        "path": "create-balchemy-agent/src/config-loader.ts",
+        "commands": [
+          "balchemy start [config]"
+        ],
+        "gaps": [
+          "No dedicated config validate/doctor command",
+          "Missing env variable errors are not rendered through a structured terminal error model"
+        ]
+      }
+    ],
+    "outputFormattingFiles": [
+      {
+        "path": "create-balchemy-agent/src/colors.ts",
+        "role": "Central color helper; respects NO_COLOR, TERM=dumb, non-TTY stdout, and --no-color."
+      },
+      {
+        "path": "create-balchemy-agent/src/index.ts",
+        "role": "Direct stdout/stderr help, list, summary, update, unknown command, and top-level error rendering."
+      },
+      {
+        "path": "create-balchemy-agent/src/wizard.ts",
+        "role": "Older readline wizard with duplicated ANSI/spinner behavior; align or retire during future implementation."
+      },
+      {
+        "path": "create-balchemy-agent/src/docker-gen.ts",
+        "role": "Direct stdout for file generation and next steps."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/ChatPanel.tsx",
+        "role": "Message cards for AI, user, tool/event/system/trade/error and thinking indicator."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/StatusPanel.tsx",
+        "role": "Terminal status sidebar with session, wallets, balances, positions, counters, and LLM spend."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/text-layout.ts",
+        "role": "Reusable ANSI stripping, display width, truncation, and wrapping helpers."
+      }
+    ],
+    "configAuthFiles": [
+      {
+        "path": "create-balchemy-agent/src/agent-store.ts",
+        "role": "Encrypted local agent store at ~/.balchemy/agents.enc, plaintext migration, active agent selection."
+      },
+      {
+        "path": "create-balchemy-agent/src/config-loader.ts",
+        "role": "YAML config loader, environment substitution, required field checks, and provider normalization."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/Wizard.tsx",
+        "role": "Walletless onboarding via public endpoints, provider API key validation, agent.config.yaml/.env/.gitignore writes, encrypted agent save."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/App.tsx",
+        "role": "Session settings for provider, model, max daily cost, slippage, strategy, and API key update."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/SecretInput.tsx",
+        "role": "Masked input for secrets in setup and credential prompts."
+      }
+    ],
+    "testsFound": [
+      {
+        "path": "create-balchemy-agent/src/tui/__tests__/text-layout.spec.ts",
+        "coverage": "Text width, wrapping, truncation, ANSI/unicode handling, long address behavior."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/__tests__/status-panel-layout.spec.ts",
+        "coverage": "Wallet row truncation and status panel width constraints."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/__tests__/status-view.spec.ts",
+        "coverage": "Session badge labels and tones."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/__tests__/setup-guidance.spec.ts",
+        "coverage": "Setup guidance sequencing and chain-specific wallet prompt decisions."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/__tests__/chat-agent.spec.ts",
+        "coverage": "ChatAgent queueing/serialization behavior."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/__tests__/terminal-session.spec.ts",
+        "coverage": "Alternate screen enter/leave behavior."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/__tests__/session-sync.spec.ts",
+        "coverage": "Session/config sync behavior."
+      },
+      {
+        "path": "create-balchemy-agent/src/__tests__/agent-store.strategy.spec.ts",
+        "coverage": "Stored agent strategy sync behavior."
+      }
+    ],
+    "docsFound": [
+      {
+        "path": "create-balchemy-agent/README.md",
+        "status": "Primary CLI docs; contains commands, files written, MCP tools, risk model, TUI shortcuts, and links; partially drifted from current wizard behavior."
+      },
+      {
+        "path": "docs/cli-testlab-testing-guide.md",
+        "status": "Manual CLI testlab guidance with useful TUI acceptance criteria and no-production-route constraints."
+      },
+      {
+        "path": "docs/superpowers/specs/2026-04-13-cli-interactive-tui-design.md",
+        "status": "Historical/stale TUI design draft; useful context but not current source of truth."
+      },
+      {
+        "path": "docs/superpowers/plans/2026-04-13-cli-interactive-tui.md",
+        "status": "Historical implementation plan; useful for lineage but partially stale."
+      },
+      {
+        "path": "docs/testing/REPRO_COMMANDS.md",
+        "status": "General project testing guide; lacks CLI/TUI-specific golden-output and render validation commands."
+      }
+    ],
+    "missingButNeeded": [
+      {
+        "path": "create-balchemy-agent/src/output.ts",
+        "purpose": "Shared non-TUI reporter for human, JSON, quiet, verbose, debug, ci, no-color, stdout/stderr, progress suppression, and redaction."
+      },
+      {
+        "path": "create-balchemy-agent/src/errors.ts",
+        "purpose": "Shared terminal error model with code, title, cause, fix, command suggestion, docs/help hint, retryability, redaction, and exit code."
+      },
+      {
+        "path": "create-balchemy-agent/src/cli-options.ts",
+        "purpose": "Central global flag parsing and command metadata to replace scattered hand-rolled flag checks without adopting a heavy parser unless needed."
+      },
+      {
+        "path": "create-balchemy-agent/src/__tests__/help-output.spec.ts",
+        "purpose": "Golden tests for --help, --version, unknown command suggestions, and no-color help output."
+      },
+      {
+        "path": "create-balchemy-agent/src/__tests__/list-output.spec.ts",
+        "purpose": "Golden and JSON tests for balchemy list, empty state, active marker, truncation, and --json schema."
+      },
+      {
+        "path": "create-balchemy-agent/src/__tests__/docker-output.spec.ts",
+        "purpose": "Dry-run, overwrite, output, and .env.example path behavior tests for balchemy docker."
+      },
+      {
+        "path": "create-balchemy-agent/src/__tests__/error-output.spec.ts",
+        "purpose": "Structured terminal error rendering tests for config, auth, network, unknown command, and file overwrite errors."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/__tests__/chat-panel-render.spec.tsx",
+        "purpose": "Ink render tests for message cards, trade/error labels, thinking state, and truncation."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/__tests__/status-panel-render.spec.tsx",
+        "purpose": "Ink render tests for standard and compact status panels."
+      },
+      {
+        "path": "create-balchemy-agent/src/tui/__tests__/wizard-render.spec.tsx",
+        "purpose": "Wizard screen, error, secret masking, overwrite preview, and footer behavior tests."
+      },
+      {
+        "path": "create-balchemy-agent/docs/balchemy-cli-tui-ux-spec.json",
+        "purpose": "Canonical JSON spec for CLI/TUI UX target state and future implementation planning."
+      },
+      {
+        "path": "docs/testing/cli-tui-repro-commands.md",
+        "purpose": "Approved container/VPS/CI validation recipes for terminal output, no-color, TERM=dumb, CI, JSON, and TUI width checks."
+      }
+    ]
+  },
+  "currentStateAssessment": {
+    "summary": "Balchemy already has a credible terminal foundation: a real npm CLI, an Ink setup wizard, a live cockpit, encrypted local agent storage, color/no-color awareness, width helpers, and trade confirmation. It is not yet a 10/10 CLI/TUI because command taxonomy is shallow, output/error behavior is fragmented, scriptability is weak, file-write/update flows need safer previews, docs drift from implementation, and terminal golden tests are missing.",
+    "scores": {
+      "firstRunExperience": 7,
+      "commandArchitecture": 6,
+      "helpUx": 6,
+      "tuiUx": 7,
+      "outputDesign": 6,
+      "errorUx": 5,
+      "safetyUx": 6,
+      "developerExperience": 5,
+      "scriptability": 3,
+      "terminalCompatibility": 7,
+      "brandFit": 7,
+      "overallCliTuiUx": 6
+    },
+    "topProblems": [
+      {
+        "id": "cli-scriptability-missing-output-modes",
+        "severity": "critical",
+        "area": "developer-experience-scriptability",
+        "affectedCommandsOrFiles": [
+          "create-balchemy-agent/src/index.ts",
+          "balchemy list",
+          "balchemy docker [outDir]",
+          "balchemy start [config]",
+          "balchemy --version"
+        ],
+        "problem": "The CLI lacks --json, --quiet, --verbose, --debug, --ci, and --dry-run modes, so automation cannot reliably consume output or avoid prompts.",
+        "whyItMatters": "Balchemy is developer infrastructure; CLI output must work in scripts, CI, agent automation, and incident/debug workflows without brittle text parsing or hanging on prompts.",
+        "recommendedFix": "Add central global option parsing in create-balchemy-agent/src/cli-options.ts and shared reporter behavior in create-balchemy-agent/src/output.ts. Implement JSON mode first for list, version, docker dry-run, config validate/doctor, and future status/current commands.",
+        "priority": "P0"
+      },
+      {
+        "id": "safety-file-writes-without-preview",
+        "severity": "critical",
+        "area": "safety-ux-file-generation",
+        "affectedCommandsOrFiles": [
+          "create-balchemy-agent/src/tui/Wizard.tsx",
+          "create-balchemy-agent/src/docker-gen.ts",
+          "balchemy init",
+          "balchemy docker [outDir]"
+        ],
+        "problem": "The wizard writes agent.config.yaml and .env, and docker generation writes Dockerfile/docker-compose.yml without a standardized preview, dry-run, or overwrite confirmation contract.",
+        "whyItMatters": "Config and credential-adjacent file writes are high-trust moments. Users need to know exactly what will be created or overwritten, especially in existing project directories and CI.",
+        "recommendedFix": "Introduce a FileWritePreview model used by Wizard and docker-gen: list path, action create/overwrite/append/skip, secret redaction status, and require explicit confirmation unless --dry-run or --ci with non-overwrite-safe behavior.",
+        "priority": "P0"
+      },
+      {
+        "id": "execution-context-not-explicit-enough",
+        "severity": "high",
+        "area": "execution-safety-context",
+        "affectedCommandsOrFiles": [
+          "create-balchemy-agent/src/tui/App.tsx",
+          "create-balchemy-agent/src/tui/ChatAgent.ts",
+          "create-balchemy-agent/src/tui/StatusPanel.tsx",
+          "TRADE CHECK overlay"
+        ],
+        "problem": "The cockpit shows agent/model/status, but risky execution confirmation should always include agent publicId, endpoint host, mode, chain/token/amount when known, dry-run/shadow/live state, and policy/risk boundary language.",
+        "whyItMatters": "Balchemy separates identity, intent, and execution. The terminal must make the current agent/context/project unmistakable before any live execution path proceeds.",
+        "recommendedFix": "Strengthen TRADE CHECK in App.tsx and ChatAgent.ts to render a structured preview with context, scope, effect, estimated risk, and exact approval text. Require typed confirmation beyond single y for live trades when amount or token is known.",
+        "priority": "P0"
+      },
+      {
+        "id": "error-ux-fragmented",
+        "severity": "high",
+        "area": "error-ux",
+        "affectedCommandsOrFiles": [
+          "create-balchemy-agent/src/index.ts",
+          "create-balchemy-agent/src/tui/AgentBridge.ts",
+          "create-balchemy-agent/src/tui/ChatPanel.tsx",
+          "create-balchemy-agent/src/tui/Wizard.tsx",
+          "create-balchemy-agent/src/config-loader.ts",
+          "create-balchemy-agent/src/runner.ts"
+        ],
+        "problem": "Errors are rendered differently across entrypoint, TUI, wizard, config loader, runner, and bridge. Many lack a clear cause/fix/command/exit-code contract.",
+        "whyItMatters": "Auth, config, provider, network, MCP, and execution failures are common in CLI products. A user should recover without reading stack traces or source code.",
+        "recommendedFix": "Create create-balchemy-agent/src/errors.ts and route all terminal-facing errors through a TerminalError structure with code, title, cause, fix, commandSuggestion, docsHint, exitCode, retryable, and debugDetails.",
+        "priority": "P1"
+      },
+      {
+        "id": "docs-and-implementation-drift",
+        "severity": "medium",
+        "area": "help-docs-onboarding",
+        "affectedCommandsOrFiles": [
+          "create-balchemy-agent/README.md",
+          "create-balchemy-agent/src/tui/Wizard.tsx",
+          "create-balchemy-agent/src/index.ts",
+          "docs/superpowers/specs/2026-04-13-cli-interactive-tui-design.md"
+        ],
+        "problem": "README says the wizard handles wallet/chain preferences and behavior rules, while current Wizard.tsx handles provider, key, model, daily cost, and agent setup. Historical TUI specs also differ from current shortcuts and panels.",
+        "whyItMatters": "CLI users often rely on --help and README before running commands. Drift erodes trust and increases setup failure.",
+        "recommendedFix": "Make create-balchemy-agent/README.md and --help reflect actual current behavior, mark historical spec as non-canonical, and add this JSON as the canonical CLI/TUI target contract.",
+        "priority": "P1"
+      },
+      {
+        "id": "docker-env-example-path-bug",
+        "severity": "medium",
+        "area": "command-correctness-output",
+        "affectedCommandsOrFiles": [
+          "create-balchemy-agent/src/docker-gen.ts",
+          "balchemy docker [outDir]"
+        ],
+        "problem": "docker-gen.ts computes envExampleDest as outDir/.env.example and then passes it as outDir to copyTemplate, likely producing an invalid destination path outDir/.env.example/.env.example.",
+        "whyItMatters": "A setup/deployment command must be boringly reliable. Path bugs damage trust and can block first successful deployment.",
+        "recommendedFix": "Fix copyTemplate call semantics during implementation, then add docker-output tests covering create, skip, dry-run, overwrite, missing dir, and JSON output.",
+        "priority": "P1"
+      },
+      {
+        "id": "global-update-defaults-yes",
+        "severity": "medium",
+        "area": "safety-ux-updates",
+        "affectedCommandsOrFiles": [
+          "create-balchemy-agent/src/index.ts"
+        ],
+        "problem": "Resolved for the release-prep line: interactive launch no longer performs an automatic npm registry update check or suggests global installs.",
+        "whyItMatters": "Global installs are shared-system mutations. Safe CLI defaults should not turn Enter into a global package update, especially in terminal contexts where users may expect launch continuation.",
+        "recommendedFix": "Keep update checks behind an explicit future command if one is added. Project instructions also state public SDK/CLI must not run periodic self-update loops or background global installs.",
+        "priority": "P1"
+      },
+      {
+        "id": "terminal-golden-tests-missing",
+        "severity": "medium",
+        "area": "testing-quality",
+        "affectedCommandsOrFiles": [
+          "create-balchemy-agent/src/__tests__",
+          "create-balchemy-agent/src/tui/__tests__",
+          "create-balchemy-agent/src/index.ts",
+          "create-balchemy-agent/src/tui/App.tsx",
+          "create-balchemy-agent/src/tui/Wizard.tsx"
+        ],
+        "problem": "Existing tests cover helper logic and layout math, but there are no golden/snapshot tests for help/list/docker/error output or full Ink render states.",
+        "whyItMatters": "Terminal UX regressions are easy to miss without golden tests, especially no-color, narrow width, CI, and secret-redaction cases.",
+        "recommendedFix": "Add CLI golden output tests, JSON schema tests, TUI render snapshots, no-color/TERM=dumb tests, overwrite/CI safety tests, and secret redaction tests.",
+        "priority": "P2"
+      }
+    ]
+  },
+  "targetExperience": {
+    "oneSentencePromise": "Balchemy CLI should let developers create, inspect, run, and safely supervise AI agents from the terminal with explicit context, predictable commands, scriptable output, and strong execution safeguards.",
+    "designPrinciples": [
+      {
+        "id": "explicit-context",
+        "principle": "Every interactive surface and risky action shows agent, endpoint host, model/provider, mode, and execution state.",
+        "appliesTo": [
+          "create-balchemy-agent/src/tui/App.tsx header",
+          "TRADE CHECK overlay",
+          "balchemy list",
+          "future balchemy context/current"
+        ]
+      },
+      {
+        "id": "safe-defaults",
+        "principle": "Enter must never approve live execution, global installs, overwrites, credential writes, or production context actions by accident.",
+        "appliesTo": [
+          "future explicit update-check command",
+          "Wizard finalize",
+          "docker-gen.ts",
+          "trade_command confirmation"
+        ]
+      },
+      {
+        "id": "scriptable-by-default",
+        "principle": "Read-only and inspection commands have stable --json output and never require a TUI.",
+        "appliesTo": [
+          "balchemy list --json",
+          "balchemy version --json",
+          "balchemy doctor --json",
+          "balchemy config list --json"
+        ]
+      },
+      {
+        "id": "human-first-output",
+        "principle": "Default output is concise, calm, copy-paste-friendly, and structured with clear headings and next commands.",
+        "appliesTo": [
+          "--help",
+          "list",
+          "docker",
+          "init summary",
+          "error panels"
+        ]
+      },
+      {
+        "id": "progressive-disclosure",
+        "principle": "Common tasks stay short and obvious; advanced debugging and raw diagnostics are behind --debug/--verbose/help.",
+        "appliesTo": [
+          "command taxonomy",
+          "help UX",
+          "TUI settings overlay",
+          "debug output"
+        ]
+      },
+      {
+        "id": "terminal-compatible",
+        "principle": "The CLI works in TTY, non-TTY, CI, no-color, TERM=dumb, narrow terminals, and Windows/macOS/Linux terminals.",
+        "appliesTo": [
+          "colors.ts",
+          "terminal-session.ts",
+          "text-layout.ts",
+          "output.ts"
+        ]
+      },
+      {
+        "id": "trust-first-copy",
+        "principle": "Tone is precise, direct, security-aware, and developer-friendly; avoid hype, toy-like language, and AI-marketing claims.",
+        "appliesTo": [
+          "help text",
+          "wizard copy",
+          "errors",
+          "confirmation dialogs"
+        ]
+      }
+    ],
+    "toneOfVoice": {
+      "shouldFeel": [
+        "calm",
+        "precise",
+        "professional",
+        "security-aware",
+        "developer-friendly",
+        "fast",
+        "serious but not intimidating",
+        "transparent about execution risk"
+      ],
+      "shouldAvoid": [
+        "generic AI agent hype",
+        "toy-like gamification",
+        "excessive emoji",
+        "enterprise coldness",
+        "marketing landing page tone",
+        "plan/tier/subscription language",
+        "ambiguous success messages",
+        "raw stack traces outside debug mode"
+      ]
+    },
+    "cliPersonality": "A reliable senior operator: terse by default, explicit before risk, helpful on failure, and stable in automation.",
+    "tuiPersonality": "A calm command cockpit: keyboard-first, context-rich, low-noise, safety-forward, and optimized for live agent supervision rather than decoration."
+  },
+  "commandArchitecture": {
+    "recommendedTaxonomy": [
+      {
+        "group": "root",
+        "commands": [
+          {
+            "name": "balchemy",
+            "purpose": "Interactive default launcher: resume active agent, choose saved agent, or start setup wizard.",
+            "mode": "interactive-tui-or-prompt",
+            "files": [
+              "create-balchemy-agent/src/index.ts",
+              "create-balchemy-agent/src/tui/start-wizard.tsx",
+              "create-balchemy-agent/src/tui/start.tsx"
+            ]
+          },
+          {
+            "name": "balchemy init",
+            "purpose": "Run setup wizard and create/connect an agent.",
+            "mode": "interactive-tui",
+            "requiredFutureFlags": [
+              "--dry-run",
+              "--ci",
+              "--force",
+              "--yes"
+            ],
+            "files": [
+              "create-balchemy-agent/src/tui/Wizard.tsx"
+            ]
+          },
+          {
+            "name": "balchemy start [config]",
+            "purpose": "Start the Ink cockpit from agent.config.yaml or a provided config path.",
+            "mode": "interactive-tui",
+            "requiredFutureFlags": [
+              "--debug",
+              "--no-color"
+            ],
+            "files": [
+              "create-balchemy-agent/src/index.ts",
+              "create-balchemy-agent/src/config-loader.ts",
+              "create-balchemy-agent/src/tui/App.tsx"
+            ]
+          },
+          {
+            "name": "balchemy list",
+            "purpose": "List saved agents and active context.",
+            "mode": "plain-cli",
+            "requiredFutureFlags": [
+              "--json",
+              "--quiet",
+              "--no-color"
+            ],
+            "files": [
+              "create-balchemy-agent/src/index.ts",
+              "create-balchemy-agent/src/agent-store.ts"
+            ]
+          },
+          {
+            "name": "balchemy docker [outDir]",
+            "purpose": "Generate Docker deployment files for an agent runtime.",
+            "mode": "plain-cli",
+            "requiredFutureFlags": [
+              "--dry-run",
+              "--json",
+              "--yes",
+              "--force",
+              "--ci"
+            ],
+            "files": [
+              "create-balchemy-agent/src/docker-gen.ts"
+            ]
+          }
+        ]
+      },
+      {
+        "group": "agent",
+        "commands": [
+          {
+            "name": "balchemy agent list",
+            "aliases": [
+              "balchemy list"
+            ],
+            "purpose": "Canonical grouped alias for saved agent list. Keep balchemy list as the short common command."
+          },
+          {
+            "name": "balchemy agent current",
+            "purpose": "Print active agent publicId, endpoint host, provider, model, mode, and createdAt."
+          },
+          {
+            "name": "balchemy agent use <publicId>",
+            "purpose": "Switch active saved agent without launching the cockpit."
+          },
+          {
+            "name": "balchemy agent forget <publicId>",
+            "purpose": "Remove a saved agent from local encrypted store after typed confirmation."
+          }
+        ]
+      },
+      {
+        "group": "config",
+        "commands": [
+          {
+            "name": "balchemy config validate [config]",
+            "purpose": "Validate agent.config.yaml and referenced env vars without starting TUI."
+          },
+          {
+            "name": "balchemy config list",
+            "purpose": "List effective non-secret config values with secret fields redacted."
+          },
+          {
+            "name": "balchemy config get <key>",
+            "purpose": "Read one effective config value, redacting secret values unless explicitly unsupported."
+          },
+          {
+            "name": "balchemy config set <key> <value>",
+            "purpose": "Write supported local config values with preview and confirmation."
+          }
+        ]
+      },
+      {
+        "group": "auth",
+        "commands": [
+          {
+            "name": "balchemy auth login",
+            "purpose": "Connect existing Balchemy agent credentials or start walletless onboarding when interactive."
+          },
+          {
+            "name": "balchemy auth logout",
+            "purpose": "Clear active selection or remove credentials after explicit confirmation."
+          },
+          {
+            "name": "balchemy auth status",
+            "purpose": "Show local auth state, active publicId, endpoint host, and credential storage status without revealing secrets."
+          }
+        ]
+      },
+      {
+        "group": "doctor",
+        "commands": [
+          {
+            "name": "balchemy doctor",
+            "purpose": "Run read-only local checks for Node version, config file, env references, agent store, endpoint reachability if allowed, and terminal compatibility."
+          }
+        ]
+      },
+      {
+        "group": "tui",
+        "commands": [
+          {
+            "name": "balchemy tui",
+            "aliases": [
+              "balchemy start"
+            ],
+            "purpose": "Explicitly launch the full-screen cockpit. Keep balchemy start as the primary command."
+          }
+        ]
+      }
+    ],
+    "commandsToKeep": [
+      {
+        "command": "balchemy",
+        "reason": "Best quick-start command; should remain the fast onboarding/resume entry."
+      },
+      {
+        "command": "balchemy init",
+        "reason": "Clear and common setup command."
+      },
+      {
+        "command": "balchemy start [config]",
+        "reason": "Simple launch command aligned with current config-loader flow."
+      },
+      {
+        "command": "balchemy list",
+        "reason": "Useful short alias for saved agents; add --json and keep output stable."
+      },
+      {
+        "command": "balchemy docker [outDir]",
+        "reason": "Useful deployment helper; needs safety/dry-run corrections."
+      },
+      {
+        "command": "balchemy --help",
+        "reason": "Keep current standard flag and expand examples."
+      },
+      {
+        "command": "balchemy --version",
+        "reason": "Keep current standard flag and add --json support."
+      },
+      {
+        "command": "balchemy --no-color",
+        "reason": "Already implemented and important for accessibility/compatibility."
+      }
+    ],
+    "commandsToRename": [
+      {
+        "from": "create-balchemy-agent",
+        "to": "balchemy",
+        "type": "documentation-preferred-bin",
+        "reason": "Both bins can continue to exist for npm compatibility, but docs/help should consistently teach balchemy as the canonical command."
+      },
+      {
+        "from": "balchemy-agent",
+        "to": "balchemy",
+        "type": "documentation-preferred-bin",
+        "reason": "Keep as compatibility bin only; avoid splitting user mental model across three command names."
+      }
+    ],
+    "commandsToMerge": [
+      {
+        "commands": [
+          "balchemy list",
+          "balchemy agent list"
+        ],
+        "decision": "Keep balchemy list as alias; implement agent list as grouped canonical metadata path if command grouping is added."
+      },
+      {
+        "commands": [
+          "balchemy start",
+          "balchemy tui"
+        ],
+        "decision": "Keep balchemy start as primary; optional balchemy tui can be an explicit alias, not a separate implementation."
+      }
+    ],
+    "commandsToSplit": [
+      {
+        "currentCommand": "balchemy",
+        "newCommands": [
+          "balchemy agent current",
+          "balchemy agent use <publicId>",
+          "balchemy auth status"
+        ],
+        "reason": "Default launcher currently combines resume, choose, and create/connect. Scriptable context inspection/switching should be available without prompts."
+      },
+      {
+        "currentCommand": "balchemy init",
+        "newCommands": [
+          "balchemy init",
+          "balchemy auth login",
+          "balchemy config validate"
+        ],
+        "reason": "Wizard onboarding should stay interactive, while auth and config validation need scriptable non-TUI surfaces."
+      }
+    ],
+    "commandsToHideOrDeprecate": [
+      {
+        "command": "direct use of create-balchemy-agent bin in docs",
+        "action": "hide-from-primary-docs",
+        "reason": "The package can expose the bin, but public docs should reduce confusion by teaching only balchemy."
+      },
+      {
+        "command": "legacy readline wizard surface",
+        "action": "keep-internal-or-remove-after-confirmation",
+        "files": [
+          "create-balchemy-agent/src/wizard.ts"
+        ],
+        "reason": "It duplicates output/color/provider logic and appears superseded by Ink Wizard.tsx."
+      },
+      {
+        "command": "implicit update prompt on every launch",
+        "action": "replace-with-explicit-update-check-or-non-blocking-hint",
+        "files": [
+          "create-balchemy-agent/src/index.ts"
+        ],
+        "reason": "Global install prompts should not interrupt default launcher and must not default yes."
+      }
+    ],
+    "globalFlags": [
+      {
+        "flag": "--json",
+        "appliesTo": [
+          "list",
+          "agent current",
+          "auth status",
+          "config list",
+          "config validate",
+          "doctor",
+          "docker --dry-run",
+          "--version"
+        ],
+        "behavior": "Emit valid JSON to stdout only; diagnostics go to stderr; no ANSI, no spinners, no prompts."
+      },
+      {
+        "flag": "--quiet",
+        "appliesTo": [
+          "all plain CLI commands"
+        ],
+        "behavior": "Suppress non-error human output; still emit JSON if --json is also set; never suppress non-zero error messages unless caller redirects stderr."
+      },
+      {
+        "flag": "--verbose",
+        "appliesTo": [
+          "init",
+          "start",
+          "docker",
+          "doctor",
+          "config validate"
+        ],
+        "behavior": "Show expanded non-secret steps, skipped files/checks, endpoint host, config paths, and timing."
+      },
+      {
+        "flag": "--debug",
+        "appliesTo": [
+          "all commands"
+        ],
+        "behavior": "Show technical details and stack traces only after redaction. Never print secrets."
+      },
+      {
+        "flag": "--ci",
+        "appliesTo": [
+          "all commands"
+        ],
+        "behavior": "Non-interactive mode: no prompts, no alternate screen, no spinners, deterministic output, fail closed if required input is missing. Implies TERM-safe/no-progress behavior but not --json."
+      },
+      {
+        "flag": "--no-color",
+        "appliesTo": [
+          "all commands"
+        ],
+        "behavior": "Disable ANSI color; keep text labels and ASCII-safe symbols. Already partially implemented in create-balchemy-agent/src/colors.ts."
+      },
+      {
+        "flag": "--dry-run",
+        "appliesTo": [
+          "init",
+          "docker",
+          "config set",
+          "future execution-adjacent commands"
+        ],
+        "behavior": "Show exact planned actions and file paths without writing files or executing risky actions."
+      },
+      {
+        "flag": "--yes",
+        "appliesTo": [
+          "safe file generation only when paired with explicit command and not live execution"
+        ],
+        "behavior": "Answer non-dangerous prompts yes. Must not approve trades, wallet mutations, credential deletion, production execution, or global installs."
+      },
+      {
+        "flag": "--force",
+        "appliesTo": [
+          "file overwrite and local store mutation commands"
+        ],
+        "behavior": "Allow overwrite/delete only after the command also provides enough explicit target context. Must not bypass live execution confirmation."
+      }
+    ],
+    "commandPatterns": {
+      "naming": "Prefer noun groups for durable surfaces and verbs for actions: agent list/current/use/forget, auth login/logout/status, config list/get/set/validate, docker generate, doctor. Keep short legacy aliases for high-frequency commands.",
+      "verbs": [
+        "init",
+        "start",
+        "list",
+        "current",
+        "use",
+        "forget",
+        "login",
+        "logout",
+        "status",
+        "validate",
+        "get",
+        "set",
+        "doctor",
+        "generate"
+      ],
+      "nouns": [
+        "agent",
+        "auth",
+        "config",
+        "context",
+        "docker",
+        "tui"
+      ],
+      "aliases": [
+        {
+          "alias": "balchemy list",
+          "canonical": "balchemy agent list"
+        },
+        {
+          "alias": "balchemy start",
+          "canonical": "balchemy tui"
+        },
+        {
+          "alias": "balchemy --version",
+          "canonical": "balchemy version"
+        }
+      ],
+      "defaults": [
+        "No args should remain interactive resume/setup launcher.",
+        "Read-only commands should never prompt by default.",
+        "File-writing commands should preview creates/overwrites before writing in TTY mode.",
+        "CI mode should fail rather than prompt.",
+        "Update checks should not block help/version/list/json/ci commands.",
+        "Live execution confirmation cannot be bypassed by global --yes."
+      ]
+    }
+  },
+  "tuiArchitecture": {
+    "shouldHaveTui": true,
+    "rationale": "Balchemy benefits from TUI for setup, live agent supervision, tool/event review, settings changes, and high-risk confirmation. TUI should not replace plain CLI for list, config validation, auth status, doctor, JSON, or CI usage.",
+    "tuiUseCases": [
+      {
+        "flow": "First-run setup wizard",
+        "commands": [
+          "balchemy",
+          "balchemy init"
+        ],
+        "files": [
+          "create-balchemy-agent/src/tui/Wizard.tsx",
+          "create-balchemy-agent/src/tui/start-wizard.tsx"
+        ],
+        "whyTui": "Provider/model selection, secret entry, daily cost safety cap, and new/existing agent decisions benefit from guided keyboard interaction and progress context."
+      },
+      {
+        "flow": "Live agent cockpit",
+        "commands": [
+          "balchemy start [config]",
+          "balchemy after resume"
+        ],
+        "files": [
+          "create-balchemy-agent/src/tui/App.tsx",
+          "create-balchemy-agent/src/tui/ChatPanel.tsx",
+          "create-balchemy-agent/src/tui/StatusPanel.tsx"
+        ],
+        "whyTui": "Long-running agent sessions need status, chat, tool traces, live decisions, and settings in one terminal surface."
+      },
+      {
+        "flow": "Risky tool/action confirmation",
+        "commands": [
+          "trade_command via TUI chat"
+        ],
+        "files": [
+          "create-balchemy-agent/src/tui/ChatAgent.ts",
+          "create-balchemy-agent/src/tui/App.tsx"
+        ],
+        "whyTui": "Execution previews require focused attention, visible context, and explicit keyboard confirmation."
+      },
+      {
+        "flow": "Session settings edit",
+        "commands": [
+          "Ctrl+S inside cockpit"
+        ],
+        "files": [
+          "create-balchemy-agent/src/tui/App.tsx"
+        ],
+        "whyTui": "Provider/model/slippage/strategy changes are session-scoped decisions and should show current values with immediate feedback."
+      }
+    ],
+    "nonTuiUseCases": [
+      {
+        "flow": "Saved agent listing",
+        "commands": [
+          "balchemy list",
+          "balchemy agent list --json"
+        ],
+        "reason": "Should be fast, pipe-friendly, and deterministic."
+      },
+      {
+        "flow": "Config validation",
+        "commands": [
+          "balchemy config validate [config]",
+          "balchemy doctor"
+        ],
+        "reason": "Diagnostic commands should work in CI and non-TTY."
+      },
+      {
+        "flow": "Docker file generation preview",
+        "commands": [
+          "balchemy docker --dry-run --json"
+        ],
+        "reason": "Preview output must be scriptable and reviewable without alternate screen."
+      },
+      {
+        "flow": "Auth status/current context",
+        "commands": [
+          "balchemy auth status",
+          "balchemy agent current"
+        ],
+        "reason": "Context inspection should be quick and copy-paste-friendly."
+      },
+      {
+        "flow": "CI setup/validation",
+        "commands": [
+          "balchemy doctor --ci --json",
+          "balchemy config validate --ci --json"
+        ],
+        "reason": "CI must never enter TUI or wait for key input."
+      }
+    ],
+    "screens": [
+      {
+        "id": "setup-provider",
+        "name": "LLM Provider Selection",
+        "purpose": "Choose external LLM provider for the agent.",
+        "layout": "Single-column wizard screen with BALCHEMY header, step indicator, provider Select, brief explanation, and footer shortcuts.",
+        "primaryActions": [
+          "Arrow keys select provider",
+          "Enter continue to API key step"
+        ],
+        "secondaryActions": [
+          "Esc no-op or previous where applicable",
+          "Ctrl+C cancel setup"
+        ],
+        "keyboardShortcuts": [
+          "Up/Down: move selection",
+          "Enter: select",
+          "Ctrl+C: quit"
+        ],
+        "emptyState": "If provider list cannot load from local definitions, show 'No providers available in this CLI build' and suggest balchemy --version plus update command.",
+        "loadingState": "No network loading should happen on this screen; provider list is local.",
+        "errorState": "Render TerminalError code PROVIDER_LIST_EMPTY with fix 'Update the CLI or reinstall package'."
+      },
+      {
+        "id": "setup-api-key",
+        "name": "Provider API Key Entry",
+        "purpose": "Collect and validate LLM provider API key without leaking it.",
+        "layout": "Wizard screen with provider label, key URL, SecretInput, validation status, and footer.",
+        "primaryActions": [
+          "Paste key",
+          "Enter validate and continue"
+        ],
+        "secondaryActions": [
+          "Esc back to provider",
+          "Ctrl+C cancel"
+        ],
+        "keyboardShortcuts": [
+          "Enter: submit",
+          "Esc: back",
+          "Ctrl+C: quit"
+        ],
+        "emptyState": "API key empty: show 'API key is required' and keep focus in SecretInput.",
+        "loadingState": "Show 'Validating key...' without printing key; suppress spinner in non-TTY.",
+        "errorState": "Provider 401/403: 'Key rejected by provider. Check the pasted key or choose another provider.' Network timeout: 'Could not validate key; continuing is allowed only with explicit confirmation.'"
+      },
+      {
+        "id": "setup-model-and-cost",
+        "name": "Model and LLM Spend Safety",
+        "purpose": "Choose model and set max daily LLM spend cap.",
+        "layout": "Model Select followed by numeric daily cost input; show cost hint and default $5 safety cap.",
+        "primaryActions": [
+          "Select model",
+          "Enter max daily USD"
+        ],
+        "secondaryActions": [
+          "Esc back",
+          "Ctrl+C cancel"
+        ],
+        "keyboardShortcuts": [
+          "Up/Down: move model",
+          "Enter: select/submit",
+          "Esc: back"
+        ],
+        "emptyState": "If no models are defined for provider, show provider-specific setup error and go back to provider selection.",
+        "loadingState": "No loading needed; model definitions are local.",
+        "errorState": "Invalid cost should not silently become $5; show 'Enter a positive USD amount, for example 5' and keep focus in input."
+      },
+      {
+        "id": "setup-agent-choice",
+        "name": "Agent Creation or Connection",
+        "purpose": "Choose walletless new agent onboarding or connect existing MCP endpoint/API key.",
+        "layout": "Two-option Select with concise explanation of what local files and encrypted store entries will be created.",
+        "primaryActions": [
+          "Create new agent",
+          "Connect existing agent"
+        ],
+        "secondaryActions": [
+          "Esc back to model/cost",
+          "Ctrl+C cancel"
+        ],
+        "keyboardShortcuts": [
+          "Up/Down: choose",
+          "Enter: continue",
+          "Esc: back"
+        ],
+        "emptyState": "Not applicable.",
+        "loadingState": "Not applicable until onboarding starts.",
+        "errorState": "Render connection/setup errors with endpoint host and no secret values."
+      },
+      {
+        "id": "setup-file-preview",
+        "name": "Local File Write Preview",
+        "purpose": "Show exact local file actions before writing agent.config.yaml, .env, and .gitignore.",
+        "layout": "Confirmation panel with table: path, action create/overwrite/append/skip, containsSecret boolean, redaction status, and required confirmation text.",
+        "primaryActions": [
+          "Type create to proceed when no overwrites",
+          "Type overwrite to proceed when overwrites exist"
+        ],
+        "secondaryActions": [
+          "Esc back",
+          "Ctrl+C cancel",
+          "d toggle dry-run details"
+        ],
+        "keyboardShortcuts": [
+          "Enter: submit typed confirmation",
+          "Esc: back",
+          "Ctrl+C: quit"
+        ],
+        "emptyState": "If no files would be written, show 'No local file changes needed' and allow continue.",
+        "loadingState": "Show 'Checking local files...' while fs existence checks run.",
+        "errorState": "Permission denied: show path, cause, and fix 'Choose another directory or adjust permissions'."
+      },
+      {
+        "id": "cockpit-main",
+        "name": "Agent Cockpit",
+        "purpose": "Live terminal workspace for chat, tool traces, status, positions, wallets, LLM spend, and session health.",
+        "layout": "Header with BALCHEMY, session badge, status badge, publicId, provider/model, LLM spend; Activity panel; StatusPanel; bottom shortcut bar. Compact mode stacks StatusPanel above Activity below 110 columns.",
+        "primaryActions": [
+          "Type message in chat input",
+          "Inspect activity/tool traces",
+          "Open settings",
+          "Scroll history"
+        ],
+        "secondaryActions": [
+          "Clear chat",
+          "Switch agent/return launcher",
+          "Quit"
+        ],
+        "keyboardShortcuts": [
+          "Ctrl+S: settings",
+          "Ctrl+L: clear chat",
+          "Ctrl+N: switch/new agent",
+          "Ctrl+Q: quit",
+          "PgUp/PgDn: scroll chat",
+          "Esc: close overlay/back"
+        ],
+        "emptyState": "Activity panel starts with a short context card: active agent, endpoint host, model, mode, and three safe example prompts.",
+        "loadingState": "Show CONNECTING badge and 'Starting agent bridge...' in activity; no raw stack unless --debug.",
+        "errorState": "Boot failure appears as structured ErrorPanel with cause/fix and suggested command: balchemy doctor or balchemy config validate."
+      },
+      {
+        "id": "cockpit-settings",
+        "name": "Session Settings Overlay",
+        "purpose": "Edit provider, model, daily cost cap, slippage, and strategy while preserving context.",
+        "layout": "Bottom overlay with current values, source local/remote, selection/edit mode, validation hints, and Escape path.",
+        "primaryActions": [
+          "Select setting",
+          "Edit value",
+          "Apply and reconnect when needed"
+        ],
+        "secondaryActions": [
+          "Esc back/close",
+          "Cancel empty text submission"
+        ],
+        "keyboardShortcuts": [
+          "Up/Down: select",
+          "Enter: edit/apply",
+          "Esc: back"
+        ],
+        "emptyState": "If remote settings cannot load, show local settings and mark remote fields unavailable with recovery hint.",
+        "loadingState": "Inline 'loading remote settings...' next to title; do not block local setting inspection.",
+        "errorState": "Validation errors keep focus in the field and show precise constraints, e.g. 'Slippage must be 10-500 bps'."
+      },
+      {
+        "id": "trade-confirmation",
+        "name": "Trade Check Confirmation",
+        "purpose": "Gate risky trade_command execution with explicit context and preview.",
+        "layout": "Red bordered overlay with TRADE CHECK badge, active agent, endpoint host, mode, action, amount, token/chain when known, policy/risk notes, dry-run status, and typed confirmation field.",
+        "primaryActions": [
+          "Type exact confirmation phrase for live execution",
+          "Type n or press Esc to cancel"
+        ],
+        "secondaryActions": [
+          "View raw tool args in debug mode with redaction",
+          "Copy suggested dry-run command when supported"
+        ],
+        "keyboardShortcuts": [
+          "Enter: submit confirmation text",
+          "Esc: cancel",
+          "Ctrl+C: cancel and quit after cleanup"
+        ],
+        "emptyState": "If action args are incomplete, default to cancel and ask user to restate the trade with token/amount/chain.",
+        "loadingState": "After confirmation, show 'Submitting to authorized execution layer...' with request id when available.",
+        "errorState": "Execution denial shows policy/risk reason, no raw secrets, and recovery command or prompt suggestion."
+      },
+      {
+        "id": "error-panel",
+        "name": "Structured Error Panel",
+        "purpose": "Standardize terminal recovery across TUI errors.",
+        "layout": "Panel with title, cause, fix, command, docs/help hint, exit code if command-level, and debug hint.",
+        "primaryActions": [
+          "Read fix",
+          "Run suggested command"
+        ],
+        "secondaryActions": [
+          "Enable --debug for technical detail",
+          "Open help overlay"
+        ],
+        "keyboardShortcuts": [
+          "Esc: close if recoverable",
+          "Ctrl+Q: quit"
+        ],
+        "emptyState": "Not applicable.",
+        "loadingState": "Not applicable.",
+        "errorState": "Error panel must never recursively render raw thrown objects."
+      },
+      {
+        "id": "help-overlay",
+        "name": "Keyboard Help Overlay",
+        "purpose": "Show cockpit shortcuts and current context without leaving TUI.",
+        "layout": "Compact overlay listing navigation, settings, chat, safety, and quit shortcuts with current mode-specific actions.",
+        "primaryActions": [
+          "Close help"
+        ],
+        "secondaryActions": [
+          "None"
+        ],
+        "keyboardShortcuts": [
+          "?: open help",
+          "Esc: close"
+        ],
+        "emptyState": "Not applicable.",
+        "loadingState": "Not applicable.",
+        "errorState": "Not applicable."
+      }
+    ],
+    "navigationModel": {
+      "primary": "Wizard uses linear steps with Escape moving back exactly one valid step. Cockpit uses persistent header/main/status/footer and modal overlays for settings, confirmations, errors, and help.",
+      "backCancelBehavior": "Esc means back/close/cancel depending on visible overlay. Ctrl+C quits with cleanup. Ctrl+Q quits cockpit. Dangerous overlays treat Esc as cancel, not approve.",
+      "focusModel": "Only one active input/select at a time. Focused control must be visible by label, position, and text state, not color alone. Modal overlays trap focus until closed or submitted.",
+      "shortcutModel": [
+        {
+          "shortcut": "Ctrl+S",
+          "scope": "cockpit chat mode",
+          "action": "Open settings overlay"
+        },
+        {
+          "shortcut": "Ctrl+L",
+          "scope": "cockpit chat mode",
+          "action": "Clear visible chat history after local confirmation if unsaved logs would be lost"
+        },
+        {
+          "shortcut": "Ctrl+N",
+          "scope": "cockpit chat mode",
+          "action": "Return to launcher/switch agent after stopping bridge"
+        },
+        {
+          "shortcut": "Ctrl+Q",
+          "scope": "cockpit",
+          "action": "Quit after stopping bridge"
+        },
+        {
+          "shortcut": "PgUp/PgDn",
+          "scope": "activity panel",
+          "action": "Scroll message history"
+        },
+        {
+          "shortcut": "Esc",
+          "scope": "overlay/wizard",
+          "action": "Back, close, or cancel; never approve"
+        },
+        {
+          "shortcut": "?",
+          "scope": "cockpit",
+          "action": "Open keyboard help overlay"
+        }
+      ]
+    }
+  },
+  "terminalDesignSystem": {
+    "colors": {
+      "useColor": true,
+      "noColorFallback": "Use plain labels and ASCII-safe prefixes. Never rely on color alone. Respect NO_COLOR, TERM=dumb, --no-color, non-TTY stdout, and --ci/no-progress behavior.",
+      "tokens": {
+        "success": "green for successful completion or safe live/connected status; fallback label SUCCESS or OK",
+        "warning": "gold/yellow for recoverable risk, setup warning, validation warning, or pending review; fallback label WARNING",
+        "danger": "red for errors, live execution confirmations, denied actions, and destructive operations; fallback label ERROR or DANGER",
+        "info": "cyan/teal for neutral information, provider/model, command hints, and active focus; fallback label INFO",
+        "muted": "dim gray for secondary metadata, timestamps, paths, hints, and separators; fallback no prefix or parenthetical text",
+        "accent": "teal for Balchemy brand title and selected non-dangerous actions; fallback uppercase BALCHEMY label",
+        "border": "gray for neutral panels; yellow for settings/warnings; red for dangerous confirmations; fallback simple ASCII separators",
+        "selected": "cyan or inverse text plus leading pointer; fallback '>' pointer",
+        "focus": "yellow/cyan label plus control position; fallback explicit Focus: label"
+      }
+    },
+    "symbols": {
+      "success": "OK",
+      "warning": "WARN",
+      "error": "ERROR",
+      "info": "INFO",
+      "pending": "PENDING",
+      "skipped": "SKIP",
+      "selected": ">",
+      "active": ">",
+      "danger": "DANGER",
+      "debug": "DEBUG"
+    },
+    "layout": {
+      "maxWidth": "Default human output should target 88 columns, wrap at terminal width when available, and remain readable at 80 columns. TUI compact mode starts below 110 columns.",
+      "tableRules": [
+        "Use tables only when rows share the same fields; otherwise use labeled summary blocks.",
+        "Do not print full secrets, full API keys, or credential-bearing URLs in tables.",
+        "Truncate public IDs and endpoints with middle truncation, preserving host and tail where useful.",
+        "In --json mode do not truncate data unless explicitly documented as redacted.",
+        "In no-color/non-TTY, preserve markers with ASCII prefixes rather than ANSI color."
+      ],
+      "panelRules": [
+        "Use panels for TUI group boundaries only; avoid nested decorative boxes.",
+        "Danger confirmations use one prominent red/danger panel and no competing decorative elements.",
+        "Settings overlays use yellow/warning border; errors use red/danger; neutral status uses gray.",
+        "Panels must degrade to simple headings and separators in non-TTY/plain CLI output."
+      ],
+      "spacingRules": [
+        "One blank line before major sections in plain CLI output, none after final line unless readability requires it.",
+        "Keep command suggestions copy-pasteable on their own line.",
+        "Avoid multi-paragraph terminal blocks; prefer title/cause/fix/command rows."
+      ],
+      "wrappingRules": [
+        "Use text-layout.ts displayWidth, truncateEnd, truncateMiddle, and wrapText for terminal-visible strings.",
+        "Never split secrets across lines; redact before wrapping.",
+        "Long JSON-like tool payloads in TUI should collapse to a short summary with debug expansion only.",
+        "At widths below 80, prioritize context, error title, and next command over decorative labels."
+      ]
+    },
+    "components": {
+      "header": {
+        "requiredFields": [
+          "BALCHEMY label",
+          "surface name",
+          "session badge",
+          "status badge",
+          "publicId or no-agent state",
+          "provider/model when available",
+          "mode live/shadow/setup/error"
+        ],
+        "files": [
+          "create-balchemy-agent/src/tui/App.tsx"
+        ],
+        "rules": [
+          "Header must fit 80 columns by truncating model/publicId with truncateMiddle.",
+          "Never show full API key or bearer token in header.",
+          "Live mode must be visible as text, not only green color."
+        ]
+      },
+      "statusBar": {
+        "requiredFields": [
+          "keyboard shortcuts",
+          "current mode",
+          "back/cancel hint when overlay is active"
+        ],
+        "files": [
+          "create-balchemy-agent/src/tui/App.tsx"
+        ],
+        "rules": [
+          "Footer shortcut line must reflect current mode and width.",
+          "Danger overlay footer must mention Esc cancels."
+        ]
+      },
+      "menu": {
+        "requiredFields": [
+          "option label",
+          "current value when applicable",
+          "selection marker",
+          "short help text"
+        ],
+        "files": [
+          "create-balchemy-agent/src/tui/Wizard.tsx",
+          "create-balchemy-agent/src/tui/App.tsx"
+        ],
+        "rules": [
+          "Selection must be clear without color.",
+          "Use concise labels; explain risk/cost in secondary text."
+        ]
+      },
+      "table": {
+        "plainCliUseCases": [
+          "balchemy list",
+          "balchemy docker --dry-run",
+          "balchemy config list",
+          "balchemy doctor"
+        ],
+        "rules": [
+          "Tables must have stable columns in human mode and stable keys in JSON mode.",
+          "Avoid truncating in JSON mode except redaction."
+        ]
+      },
+      "list": {
+        "useCases": [
+          "saved agents",
+          "wizard providers",
+          "models",
+          "settings items",
+          "doctor checks"
+        ],
+        "rules": [
+          "Lists show active/current marker where applicable.",
+          "Empty states include the next command."
+        ]
+      },
+      "detailPanel": {
+        "useCases": [
+          "agent current",
+          "config validate summary",
+          "doctor result",
+          "TUI status detail"
+        ],
+        "rules": [
+          "Use label/value rows.",
+          "Group security-sensitive fields under a redacted credentials section."
+        ]
+      },
+      "form": {
+        "useCases": [
+          "wizard API key",
+          "daily cost",
+          "agent name",
+          "existing MCP endpoint",
+          "settings edit"
+        ],
+        "rules": [
+          "Validation errors keep focus in the field.",
+          "Secret fields use SecretInput, never TextInput.",
+          "Defaults are shown but not silently applied when invalid input is entered."
+        ]
+      },
+      "confirmDialog": {
+        "useCases": [
+          "trade confirmation",
+          "file overwrite",
+          "agent forget/logout",
+          "global update",
+          "production context action"
+        ],
+        "rules": [
+          "Dangerous actions require typed confirmation, not Enter default.",
+          "Show exact target and effect.",
+          "Esc and blank input cancel.",
+          "--yes cannot approve live trades or wallet/key mutations."
+        ]
+      },
+      "progress": {
+        "useCases": [
+          "provider key validation",
+          "walletless onboarding",
+          "bridge startup",
+          "docker file generation",
+          "doctor checks"
+        ],
+        "rules": [
+          "Use inline status in TUI.",
+          "Use one-line step messages in plain CLI.",
+          "Suppress spinners in non-TTY/CI/JSON/quiet.",
+          "Every long-running step should have a terminal success or failure line."
+        ]
+      },
+      "errorPanel": {
+        "requiredFields": [
+          "title",
+          "cause",
+          "fix",
+          "commandSuggestion",
+          "docsHintOrHelpHint",
+          "exitCode",
+          "debugHint"
+        ],
+        "rules": [
+          "No raw stack traces unless --debug.",
+          "No secrets in technical details.",
+          "Use consistent exit codes from errorStandards."
+        ]
+      },
+      "emptyState": {
+        "rules": [
+          "Say what is empty, why it may be empty, and the next command.",
+          "Example: 'No saved agents. Run balchemy init to create one or balchemy auth login to connect existing credentials.'"
+        ]
+      },
+      "helpOverlay": {
+        "rules": [
+          "Show only mode-relevant shortcuts first.",
+          "Keep full shortcut list under ? overlay and README.",
+          "Shortcuts in code, --help, and README must match."
+        ]
+      }
+    }
+  },
+  "outputStandards": {
+    "defaultHumanReadable": {
+      "stdout": "Primary command result, summaries, tables, success messages, and next-step commands.",
+      "stderr": "Warnings, errors, update notices, debug diagnostics, and progress for long-running non-JSON commands when stdout may be piped.",
+      "format": [
+        "Short title line",
+        "Context rows when relevant",
+        "Action/result rows",
+        "Next command or recovery hint"
+      ],
+      "rules": [
+        "No ANSI when color disabled or stdout is not TTY.",
+        "No secrets or full API keys.",
+        "No spinner redraw in non-TTY.",
+        "No markdown tables in terminal output; use padded rows or plain lists."
+      ]
+    },
+    "jsonMode": {
+      "flag": "--json",
+      "stdout": "Only valid JSON, no ANSI, no headings, no trailing logs, no spinners.",
+      "stderr": "Non-JSON warnings/errors only when necessary; keep machine stdout clean.",
+      "topLevelShape": {
+        "ok": "boolean",
+        "command": "string",
+        "version": "string",
+        "data": "object|array|null",
+        "warnings": "array",
+        "error": "object|null"
+      },
+      "errorShape": {
+        "code": "string",
+        "title": "string",
+        "cause": "string",
+        "fix": "string",
+        "commandSuggestion": "string|null",
+        "exitCode": "number",
+        "retryable": "boolean"
+      },
+      "rules": [
+        "JSON mode never enters TUI.",
+        "JSON mode never prompts; if input is missing, return ok=false with error and non-zero exit.",
+        "Secret values are redacted as '[redacted]' and include redacted=true metadata where useful.",
+        "For long-running future watch/log modes, prefer NDJSON only if a distinct --ndjson flag is introduced."
+      ]
+    },
+    "quietMode": {
+      "flag": "--quiet",
+      "behavior": "Suppress non-essential success/info output. Keep errors on stderr and JSON stdout when --json is present.",
+      "useCases": [
+        "CI scripts checking exit code",
+        "silent config validation",
+        "docker generation in scripted workflows"
+      ],
+      "rules": [
+        "Do not suppress prompts in interactive TTY unless --ci is also set; instead avoid using quiet for prompt-heavy flows.",
+        "Do not hide destructive confirmation text."
+      ]
+    },
+    "verboseMode": {
+      "flag": "--verbose",
+      "behavior": "Show expanded steps, file paths, skipped actions, config source, endpoint host, provider/model, and check timing without stack traces.",
+      "rules": [
+        "Never print secret values.",
+        "Use stderr for diagnostic progress if stdout may be machine-consumed."
+      ]
+    },
+    "debugMode": {
+      "flag": "--debug",
+      "behavior": "Show redacted stack traces, request ids, HTTP status codes, provider endpoint host, retry attempts, and raw error class names.",
+      "rules": [
+        "Apply redaction before rendering.",
+        "Never print MCP API keys, LLM API keys, Authorization headers, seed phrases, private keys, DSNs, or full credential-bearing URLs.",
+        "Debug mode does not bypass safety confirmations."
+      ]
+    },
+    "ciMode": {
+      "flag": "--ci",
+      "behavior": "Non-interactive deterministic command behavior. No alternate screen, no prompts, no browser opening, no update prompt, no spinner animation.",
+      "rules": [
+        "Fail with exit code 2 for missing required input or command misuse.",
+        "Fail with exit code 4 for unsafe operation requiring confirmation unless --dry-run is used or explicit safe flags are provided.",
+        "CI mode should be compatible with --json."
+      ]
+    },
+    "dryRunMode": {
+      "flag": "--dry-run",
+      "behavior": "Show planned file writes, overwrites, config mutations, or execution-adjacent actions without applying them.",
+      "appliesTo": [
+        "balchemy init",
+        "balchemy docker [outDir]",
+        "balchemy config set",
+        "future risky action commands"
+      ],
+      "rules": [
+        "Dry-run output includes exact paths and create/overwrite/append/skip actions.",
+        "Dry-run JSON includes plan array with action, path, exists, wouldOverwrite, containsSecret, and redactedPreview where safe."
+      ]
+    },
+    "examples": [
+      {
+        "command": "balchemy list",
+        "humanOutput": "Saved agents (2)\n> agent_abc...123  live  Claude Sonnet 4.6\n  Endpoint  api.balchemy.ai/mcp/...123\n  Created   2026-05-24T09:00:00Z\n\nNext: balchemy start or balchemy agent use <publicId>",
+        "jsonOutput": {
+          "ok": true,
+          "command": "agent.list",
+          "data": {
+            "activePublicId": "agent_abc123",
+            "agents": [
+              {
+                "publicId": "agent_abc123",
+                "active": true,
+                "endpointHost": "api.balchemy.ai",
+                "llmModel": "claude-sonnet-4-6",
+                "mode": "live",
+                "createdAt": "2026-05-24T09:00:00.000Z"
+              }
+            ]
+          },
+          "warnings": [],
+          "error": null
+        }
+      },
+      {
+        "command": "balchemy docker ./deploy --dry-run",
+        "humanOutput": "Docker generation preview\nCREATE  ./deploy/Dockerfile\nOVERWRITE  ./deploy/docker-compose.yml  requires confirmation\nSKIP  ./deploy/.env.example  already exists\n\nRun with --yes to create non-overwrite files, or --force to allow overwrite after review.",
+        "jsonOutput": {
+          "ok": true,
+          "command": "docker.generate.preview",
+          "data": {
+            "outDir": "./deploy",
+            "dryRun": true,
+            "plan": [
+              {
+                "action": "create",
+                "path": "./deploy/Dockerfile",
+                "exists": false,
+                "wouldOverwrite": false
+              },
+              {
+                "action": "overwrite",
+                "path": "./deploy/docker-compose.yml",
+                "exists": true,
+                "wouldOverwrite": true
+              }
+            ]
+          },
+          "warnings": [],
+          "error": null
+        }
+      },
+      {
+        "command": "balchemy config validate --json",
+        "jsonOutput": {
+          "ok": false,
+          "command": "config.validate",
+          "data": null,
+          "warnings": [],
+          "error": {
+            "code": "CONFIG_ENV_MISSING",
+            "title": "Missing environment variable",
+            "cause": "agent.config.yaml references LLM_API_KEY but it is not set.",
+            "fix": "Add LLM_API_KEY to .env next to the config file or export it before running balchemy start.",
+            "commandSuggestion": "balchemy config validate agent.config.yaml --verbose",
+            "exitCode": 2,
+            "retryable": false
+          }
+        }
+      }
+    ]
+  },
+  "errorStandards": {
+    "structure": {
+      "title": "Short human-readable error title, e.g. Missing config file",
+      "cause": "One sentence explaining what failed and which file/command/context was involved.",
+      "fix": "One concrete next step the user can take.",
+      "commandSuggestion": "A copy-pasteable command when applicable, e.g. balchemy config validate agent.config.yaml --verbose",
+      "docsHint": "Use command-local help first, e.g. Run balchemy start --help. External docs link only when already documented and stable.",
+      "exitCode": "Numeric exit code from the standard map.",
+      "debugDetails": "Only in --debug; redacted stack, status code, request id, endpoint host, and retry info."
+    },
+    "exitCodeMap": [
+      {
+        "code": 0,
+        "meaning": "Success"
+      },
+      {
+        "code": 1,
+        "meaning": "General runtime failure"
+      },
+      {
+        "code": 2,
+        "meaning": "Usage/config/input validation error"
+      },
+      {
+        "code": 3,
+        "meaning": "Authentication or authorization failure"
+      },
+      {
+        "code": 4,
+        "meaning": "Safety confirmation required or refused"
+      },
+      {
+        "code": 5,
+        "meaning": "Network/provider/MCP unavailable"
+      },
+      {
+        "code": 6,
+        "meaning": "File system write/read permission or conflict"
+      },
+      {
+        "code": 7,
+        "meaning": "Execution/policy/risk denial"
+      },
+      {
+        "code": 130,
+        "meaning": "Interrupted by user"
+      }
+    ],
+    "errorTypes": [
+      {
+        "type": "UNKNOWN_COMMAND",
+        "exampleMessage": "Unknown command: statr\nDid you mean balchemy start?\nRun balchemy --help for available commands.",
+        "exitCode": 2,
+        "recoverySuggestion": "Use typo suggestion when edit distance <= 2; otherwise show top-level command list."
+      },
+      {
+        "type": "CONFIG_FILE_MISSING",
+        "exampleMessage": "Missing config file\nCause: agent.config.yaml was not found in the current directory.\nFix: Run balchemy init or pass a config path.\nCommand: balchemy start ./agent.config.yaml",
+        "exitCode": 2,
+        "recoverySuggestion": "Suggest balchemy init for new users and balchemy config validate <path> for existing configs."
+      },
+      {
+        "type": "CONFIG_ENV_MISSING",
+        "exampleMessage": "Missing environment variable\nCause: agent.config.yaml references LLM_API_KEY but it is not set.\nFix: Add LLM_API_KEY to .env next to the config file or export it before running start.",
+        "exitCode": 2,
+        "recoverySuggestion": "Show the missing variable name, never the secret value."
+      },
+      {
+        "type": "CONFIG_YAML_INVALID",
+        "exampleMessage": "Invalid YAML config\nCause: agent.config.yaml could not be parsed.\nFix: Check indentation and run balchemy config validate agent.config.yaml --verbose.",
+        "exitCode": 2,
+        "recoverySuggestion": "In --debug include parser line/column if available."
+      },
+      {
+        "type": "AUTH_KEY_REJECTED",
+        "exampleMessage": "Provider key rejected\nCause: Anthropic returned 401/403 while validating the key.\nFix: Paste a valid provider API key or choose another provider.",
+        "exitCode": 3,
+        "recoverySuggestion": "Keep focus in SecretInput; do not print key."
+      },
+      {
+        "type": "MCP_AUTH_FAILED",
+        "exampleMessage": "Balchemy API key rejected\nCause: The MCP endpoint returned 401 for the active agent key.\nFix: Check the saved agent credentials or run balchemy auth login.",
+        "exitCode": 3,
+        "recoverySuggestion": "Show publicId and endpoint host; redact key."
+      },
+      {
+        "type": "NETWORK_TIMEOUT",
+        "exampleMessage": "Network request timed out\nCause: The CLI could not reach api.balchemy.ai within 8 seconds.\nFix: Check network access and retry.\nCommand: balchemy doctor --verbose",
+        "exitCode": 5,
+        "recoverySuggestion": "Mark retryable=true and include endpoint host in debug details."
+      },
+      {
+        "type": "FILE_OVERWRITE_CONFIRMATION_REQUIRED",
+        "exampleMessage": "Overwrite confirmation required\nCause: ./agent.config.yaml already exists.\nFix: Review the preview and type overwrite, or rerun with --dry-run to inspect without writing.",
+        "exitCode": 4,
+        "recoverySuggestion": "Never overwrite by default. In --ci fail closed unless --force is explicitly provided for file commands."
+      },
+      {
+        "type": "FILE_PERMISSION_DENIED",
+        "exampleMessage": "Cannot write file\nCause: Permission denied while writing ./deploy/Dockerfile.\nFix: Choose a writable directory or adjust permissions.",
+        "exitCode": 6,
+        "recoverySuggestion": "Show path; avoid stack trace unless --debug."
+      },
+      {
+        "type": "TRADE_CONFIRMATION_REQUIRED",
+        "exampleMessage": "Trade confirmation required\nCause: The external LLM requested trade_command for the active live agent.\nFix: Review token, amount, chain, mode, and type the exact confirmation phrase to proceed.",
+        "exitCode": 4,
+        "recoverySuggestion": "In TUI, keep confirmation overlay focused; in non-TUI, refuse unless an authorized non-interactive execution flow is explicitly designed."
+      },
+      {
+        "type": "TRADE_CANCELLED_BY_USER",
+        "exampleMessage": "Trade cancelled\nCause: User rejected the TRADE CHECK prompt.\nFix: No action was executed. Send a new instruction if you want a different trade preview.",
+        "exitCode": 0,
+        "recoverySuggestion": "Record cancellation in activity as system/tool result, not as error."
+      },
+      {
+        "type": "POLICY_RISK_DENIED",
+        "exampleMessage": "Execution denied by policy\nCause: Behavior rules or pre-trade risk checks blocked the requested action.\nFix: Review active rules and risk output before trying another instruction.",
+        "exitCode": 7,
+        "recoverySuggestion": "Show denial reason and related rule/check id when available."
+      },
+      {
+        "type": "CI_PROMPT_BLOCKED",
+        "exampleMessage": "Non-interactive input required\nCause: This command needs a prompt, but --ci was used.\nFix: Provide required flags or run interactively.",
+        "exitCode": 2,
+        "recoverySuggestion": "Never hang in CI."
+      },
+      {
+        "type": "TERMINAL_UNSUPPORTED_TUI",
+        "exampleMessage": "Interactive terminal required\nCause: The cockpit needs a TTY, but stdout is not interactive.\nFix: Run balchemy start in a terminal, or use balchemy config validate --json for CI checks.",
+        "exitCode": 2,
+        "recoverySuggestion": "Do not emit alternate-screen escape codes in non-TTY."
+      }
+    ]
+  },
+  "safetyStandards": {
+    "dangerousOperations": [
+      {
+        "operation": "trade_command live execution",
+        "currentFiles": [
+          "create-balchemy-agent/src/tui/ChatAgent.ts",
+          "create-balchemy-agent/src/tui/App.tsx"
+        ],
+        "risk": "Financial execution through authorized backend/trading layer.",
+        "requiredUx": "TRADE CHECK overlay with exact action, amount, token, chain when known, publicId, endpoint host, mode, policy/risk notes, and typed confirmation."
+      },
+      {
+        "operation": "wizard writes agent.config.yaml and .env",
+        "currentFiles": [
+          "create-balchemy-agent/src/tui/Wizard.tsx"
+        ],
+        "risk": "Overwriting local config or secret files.",
+        "requiredUx": "File preview table and explicit create/overwrite confirmation; dry-run support."
+      },
+      {
+        "operation": "docker file generation",
+        "currentFiles": [
+          "create-balchemy-agent/src/docker-gen.ts"
+        ],
+        "risk": "Overwriting deployment files and misdirecting setup.",
+        "requiredUx": "Dry-run preview, overwrite detection, --force semantics, and tests for .env.example path."
+      },
+      {
+        "operation": "global CLI update install",
+        "currentFiles": [
+          "create-balchemy-agent/src/index.ts"
+        ],
+        "risk": "Mutates global npm installation and can alter shared machine state.",
+        "requiredUx": "Default no, skip in CI/non-TTY/help/version/json, and prefer explicit update command."
+      },
+      {
+        "operation": "agent credential deletion/logout/forget",
+        "futureFiles": [
+          "create-balchemy-agent/src/agent-store.ts",
+          "create-balchemy-agent/src/index.ts"
+        ],
+        "risk": "Removes local encrypted credential references and active context.",
+        "requiredUx": "Show publicId and endpoint host; require typed publicId or 'forget <short-id>' confirmation; never delete without explicit target."
+      },
+      {
+        "operation": "provider/API key update in settings",
+        "currentFiles": [
+          "create-balchemy-agent/src/tui/App.tsx",
+          "create-balchemy-agent/src/tui/SecretInput.tsx"
+        ],
+        "risk": "Credential mutation and session reconnect.",
+        "requiredUx": "Masked input, provider label, reconnection status, rollback hint, and no raw key in activity."
+      }
+    ],
+    "requiresConfirmation": [
+      {
+        "flow": "TRADE CHECK",
+        "confirmation": "For live known-amount trades, require typed phrase 'execute <action> <amount> <symbol-or-token-tail>' or an equivalent exact phrase. Single y is acceptable only for shadow/dry-run or incomplete non-executing previews."
+      },
+      {
+        "flow": "File overwrite",
+        "confirmation": "Require typing 'overwrite' in TTY or passing --force for file commands; --yes alone is not enough for overwrites."
+      },
+      {
+        "flow": "New file creation with secrets",
+        "confirmation": "Require 'create' in TTY when .env will be written; show that secrets will be stored locally and .env will be added to .gitignore."
+      },
+      {
+        "flow": "Global npm update",
+        "confirmation": "Default to no and require explicit y/yes; never run in --ci; consider moving to balchemy update."
+      },
+      {
+        "flow": "Agent forget/logout removing stored credential",
+        "confirmation": "Require typed publicId or exact short id."
+      },
+      {
+        "flow": "Production context action",
+        "confirmation": "Show production endpoint/context and require typed 'production' only for actions that are explicitly authorized and safe in CLI scope."
+      }
+    ],
+    "supportsDryRun": [
+      {
+        "command": "balchemy init --dry-run",
+        "behavior": "Run wizard until file/action preview, then show planned local writes and onboarding requirements without writing files or saving agent credentials."
+      },
+      {
+        "command": "balchemy docker [outDir] --dry-run",
+        "behavior": "Show planned Dockerfile/docker-compose.yml/.env.example create/overwrite/skip actions without writing."
+      },
+      {
+        "command": "balchemy config set <key> <value> --dry-run",
+        "behavior": "Show planned config file mutation and validation result without writing."
+      },
+      {
+        "command": "future execution-adjacent command --dry-run",
+        "behavior": "Preview request/context/policy checks without submitting live execution."
+      }
+    ],
+    "supportsForceYes": [
+      {
+        "flag": "--yes",
+        "allowedFor": [
+          "non-overwrite file creation",
+          "safe prompt continuation in CI when all inputs are explicit"
+        ],
+        "notAllowedFor": [
+          "trade_command",
+          "wallet/key mutation",
+          "credential deletion",
+          "global npm install",
+          "production context action",
+          "file overwrite without --force"
+        ]
+      },
+      {
+        "flag": "--force",
+        "allowedFor": [
+          "overwriting local generated files after explicit command target",
+          "forgetting local saved agent after explicit publicId target"
+        ],
+        "notAllowedFor": [
+          "live trades",
+          "policy/risk bypass",
+          "wallet provisioning",
+          "approvals",
+          "withdrawals",
+          "secret redaction bypass"
+        ]
+      }
+    ],
+    "productionContextWarnings": [
+      "Always show endpoint host and publicId in live cockpit header.",
+      "If endpoint host is api.balchemy.ai or config mode is live, label mode as LIVE in text.",
+      "For any future production-affecting CLI command, require explicit typed production confirmation and never default yes.",
+      "Do not expose production credentials, raw bearer tokens, or wallet keys in terminal output, debug logs, JSON, or screenshots."
+    ],
+    "rollbackGuidance": [
+      {
+        "operation": "config file overwrite",
+        "guidance": "Before overwrite, show backup path or recommend copying existing file; future implementation may create .bak only with explicit confirmation."
+      },
+      {
+        "operation": "provider/model settings change",
+        "guidance": "Show previous provider/model in activity and suggest reverting via Ctrl+S settings if reconnect fails."
+      },
+      {
+        "operation": "docker file generation",
+        "guidance": "Dry-run first; if overwritten, show exact files changed and suggest git diff for tracked files."
+      },
+      {
+        "operation": "trade cancelled or denied",
+        "guidance": "State that no action was executed; for denied trades, show risk/policy reason and suggest adjusting instruction rather than bypassing checks."
+      }
+    ]
+  },
+  "authConfigUx": {
+    "firstRunFlow": [
+      {
+        "step": "Detect saved agents",
+        "currentFiles": [
+          "create-balchemy-agent/src/index.ts",
+          "create-balchemy-agent/src/agent-store.ts"
+        ],
+        "targetBehavior": "If agents exist, show active/most recent context with actions resume, choose, new. If none, launch wizard. In --ci, do not prompt; return error with suggested command."
+      },
+      {
+        "step": "Choose LLM provider",
+        "currentFiles": [
+          "create-balchemy-agent/src/tui/Wizard.tsx"
+        ],
+        "targetBehavior": "Show provider choices and explain external LLM powers decisions while Balchemy enforces scoped execution."
+      },
+      {
+        "step": "Enter provider API key",
+        "currentFiles": [
+          "create-balchemy-agent/src/tui/Wizard.tsx",
+          "create-balchemy-agent/src/tui/SecretInput.tsx"
+        ],
+        "targetBehavior": "Use SecretInput, validate when possible, never print key, and explain storage destination before writing .env/encrypted store."
+      },
+      {
+        "step": "Select model and cost cap",
+        "currentFiles": [
+          "create-balchemy-agent/src/tui/Wizard.tsx"
+        ],
+        "targetBehavior": "Cost cap validation must reject invalid values instead of silently defaulting to 5."
+      },
+      {
+        "step": "Create or connect agent",
+        "currentFiles": [
+          "create-balchemy-agent/src/tui/Wizard.tsx"
+        ],
+        "targetBehavior": "Explain walletless onboarding vs existing endpoint; show publicId and endpoint host after success."
+      },
+      {
+        "step": "Preview local writes",
+        "futureFiles": [
+          "create-balchemy-agent/src/output.ts",
+          "create-balchemy-agent/src/file-plan.ts"
+        ],
+        "targetBehavior": "Show file plan for agent.config.yaml, .env, .gitignore, and encrypted store before writing."
+      },
+      {
+        "step": "Launch cockpit",
+        "currentFiles": [
+          "create-balchemy-agent/src/tui/start.tsx",
+          "create-balchemy-agent/src/tui/App.tsx"
+        ],
+        "targetBehavior": "Start cockpit with explicit agent/model/mode header and initial empty-state guidance."
+      }
+    ],
+    "loginFlow": [
+      {
+        "command": "balchemy auth login",
+        "targetBehavior": "Interactive TTY: choose create new walletless agent or connect existing MCP endpoint/API key. Non-TTY/CI: require endpoint and key via env/flags and never prompt."
+      },
+      {
+        "command": "balchemy auth login --endpoint <url> --api-key-env BALCHEMY_API_KEY --ci",
+        "targetBehavior": "Validate endpoint shape, read key from env, save encrypted store only if explicitly allowed, and emit JSON summary when --json is set."
+      }
+    ],
+    "logoutFlow": [
+      {
+        "command": "balchemy auth logout",
+        "targetBehavior": "Clear active agent selection only; do not delete saved credentials unless --forget or agent forget is explicitly used."
+      },
+      {
+        "command": "balchemy agent forget <publicId>",
+        "targetBehavior": "Delete saved local agent after typed publicId confirmation or explicit --force with exact publicId in CI."
+      }
+    ],
+    "currentContextDisplay": "Every context display should include active publicId, endpoint host, provider, model, mode live/shadow/setup, config source, credential storage state encrypted/plaintext-migrated, and createdAt. It must never include raw API keys, bearer tokens, private keys, seed phrases, or full credential-bearing URLs.",
+    "configCommands": [
+      {
+        "command": "balchemy config validate [config]",
+        "purpose": "Check file existence, YAML parse, env substitutions, required fields, provider normalization, and safe defaults without launching TUI."
+      },
+      {
+        "command": "balchemy config list [config]",
+        "purpose": "Print effective non-secret config with redacted secret fields and config/env source information."
+      },
+      {
+        "command": "balchemy config get <key>",
+        "purpose": "Read one non-secret effective value; secret keys return redacted metadata, not secret value."
+      },
+      {
+        "command": "balchemy config set <key> <value>",
+        "purpose": "Safely mutate supported local config keys with validation, preview, and confirmation."
+      }
+    ],
+    "ciAuthMode": "CI auth must use environment variables or explicit non-secret references only. Recommended inputs: MCP_ENDPOINT, BALCHEMY_API_KEY, LLM_API_KEY, and optional BALCHEMY_AGENT_PUBLIC_ID. CI commands must not open browser, enter alternate screen, prompt for input, or write credentials unless explicitly requested with safe flags.",
+    "tokenHandlingRules": [
+      "Read secrets from env or SecretInput only.",
+      "Write secrets only to .env or encrypted agent store after preview/confirmation.",
+      "Append .env to .gitignore when writing .env, but preview the append action first.",
+      "Redact secrets in human output, JSON output, debug output, TUI activity, tests, and errors.",
+      "Mask provider keys using fixed head/tail only when necessary; prefer '[redacted]' for machine output.",
+      "Never print Authorization headers, raw MCP API keys, LLM API keys, wallet private keys, seed phrases, DSNs, or credential-bearing URLs.",
+      "Do not leak backend business logic, trading internals, privileged operational workflows, or private endpoints into the public CLI."
+    ]
+  },
+  "implementationPlan": {
+    "phase1Foundation": {
+      "goal": "Create a shared terminal UX foundation without changing command behavior broadly.",
+      "filesToChange": [
+        "create-balchemy-agent/src/colors.ts",
+        "create-balchemy-agent/src/output.ts",
+        "create-balchemy-agent/src/errors.ts",
+        "create-balchemy-agent/src/cli-options.ts",
+        "create-balchemy-agent/src/tui/text-layout.ts",
+        "create-balchemy-agent/src/index.ts"
+      ],
+      "changes": [
+        "Add central CliOptions parser for global flags while preserving current commands.",
+        "Add TerminalReporter for human/json/quiet/verbose/debug/ci/no-color output.",
+        "Add TerminalError model and redaction utilities.",
+        "Route unknown command, top-level catch, version, and list output through shared reporter.",
+        "Keep existing colors.ts behavior as the color-awareness source of truth."
+      ],
+      "tests": [
+        "help-output.spec.ts for help/version/unknown command/no-color",
+        "error-output.spec.ts for TerminalError rendering",
+        "JSON parse/schema tests for --version --json and list --json",
+        "NO_COLOR, TERM=dumb, non-TTY, and --no-color tests"
+      ]
+    },
+    "phase2CommandArchitecture": {
+      "goal": "Add scriptable command surfaces and safer command taxonomy while preserving short existing commands.",
+      "filesToChange": [
+        "create-balchemy-agent/src/index.ts",
+        "create-balchemy-agent/src/agent-store.ts",
+        "create-balchemy-agent/src/config-loader.ts",
+        "create-balchemy-agent/src/docker-gen.ts",
+        "create-balchemy-agent/README.md"
+      ],
+      "changes": [
+        "Add balchemy agent list/current/use/forget wrappers, with balchemy list preserved as alias.",
+        "Add balchemy auth status/login/logout command surfaces where feasible.",
+        "Add balchemy config validate/list/get/set read-first surfaces.",
+        "Add balchemy doctor for local CLI readiness checks.",
+        "Add --json support to list/current/auth status/config validate/doctor/docker dry-run/version.",
+        "Remove automatic launch-time update checks; leave any future registry check behind an explicit command."
+      ],
+      "tests": [
+        "list-output.spec.ts human/json/empty/active/truncation",
+        "config-validate-output.spec.ts missing file/missing env/invalid yaml",
+        "doctor-output.spec.ts json and human summaries",
+        "agent-command.spec.ts active selection and not-found behavior"
+      ]
+    },
+    "phase3OutputAndErrors": {
+      "goal": "Normalize terminal output, error UX, dry-run, and safety confirmations for non-TUI commands.",
+      "filesToChange": [
+        "create-balchemy-agent/src/output.ts",
+        "create-balchemy-agent/src/errors.ts",
+        "create-balchemy-agent/src/docker-gen.ts",
+        "create-balchemy-agent/src/tui/Wizard.tsx",
+        "create-balchemy-agent/src/config-loader.ts",
+        "create-balchemy-agent/src/runner.ts"
+      ],
+      "changes": [
+        "Add file write plan abstraction for create/overwrite/append/skip actions.",
+        "Add balchemy docker --dry-run and fix .env.example destination semantics.",
+        "Add overwrite confirmation behavior for docker generation and wizard file writes.",
+        "Replace fragmented raw Error: output with TerminalError rendering.",
+        "Ensure quiet/verbose/debug behavior is consistent and redacted."
+      ],
+      "tests": [
+        "docker-output.spec.ts create/skip/overwrite/dry-run/json/missing-dir",
+        "wizard-file-preview.spec.ts create/overwrite/append/permission denied",
+        "secret-redaction.spec.ts for human/json/debug/TUI messages",
+        "ci-mode.spec.ts for no prompts and fail-closed behavior"
+      ]
+    },
+    "phase4TuiExperience": {
+      "goal": "Strengthen Ink wizard/cockpit safety, context visibility, accessibility, and render stability.",
+      "filesToChange": [
+        "create-balchemy-agent/src/tui/App.tsx",
+        "create-balchemy-agent/src/tui/Wizard.tsx",
+        "create-balchemy-agent/src/tui/ChatPanel.tsx",
+        "create-balchemy-agent/src/tui/StatusPanel.tsx",
+        "create-balchemy-agent/src/tui/ChatAgent.ts",
+        "create-balchemy-agent/src/tui/AgentBridge.ts",
+        "create-balchemy-agent/src/tui/SecretInput.tsx",
+        "create-balchemy-agent/src/tui/terminal-session.ts"
+      ],
+      "changes": [
+        "Add initial cockpit empty-state context card.",
+        "Strengthen TRADE CHECK overlay with publicId, endpoint host, mode, amount/token/chain, and typed confirmation.",
+        "Add ? help overlay and keep shortcuts synchronized with README/help.",
+        "Make wizard invalid cost handling explicit rather than silently defaulting.",
+        "Add wizard file write preview screen before finalize writes.",
+        "Improve boot/network/provider errors through ErrorPanel structure.",
+        "Ensure compact layout does not overflow at 80, 100, 110, and 148 columns."
+      ],
+      "tests": [
+        "chat-panel-render.spec.tsx",
+        "status-panel-render.spec.tsx",
+        "wizard-render.spec.tsx",
+        "trade-confirmation-render.spec.tsx",
+        "terminal-session.spec.ts for TTY/non-TTY alternate screen behavior",
+        "text-layout.spec.ts retained and expanded"
+      ]
+    },
+    "phase5PolishAndCompatibility": {
+      "goal": "Lock CLI/TUI UX quality with docs, compatibility checks, and acceptance gates.",
+      "filesToChange": [
+        "create-balchemy-agent/README.md",
+        "create-balchemy-agent/docs/balchemy-cli-tui-ux-spec.json",
+        "docs/cli-testlab-testing-guide.md",
+        "docs/testing/cli-tui-repro-commands.md",
+        "docs/superpowers/specs/2026-04-13-cli-interactive-tui-design.md"
+      ],
+      "changes": [
+        "Update README commands, wizard steps, shortcuts, output modes, and safety model to match implementation.",
+        "Add CLI/TUI repro command guide for approved container/VPS/CI contexts.",
+        "Mark historical superpowers TUI spec as non-canonical or reference this JSON as target state.",
+        "Add terminal compatibility matrix: TTY, non-TTY, NO_COLOR, TERM=dumb, --ci, narrow width, Windows/macOS/Linux.",
+        "Document that web UI/dashboard/browser frontend are out of scope for CLI/TUI implementation."
+      ],
+      "tests": [
+        "Docs command examples match CLI help snapshots.",
+        "Package dry-run in approved CI/VPS verifies docs file inclusion if this spec should ship with package.",
+        "Terminal compatibility checklist manually run in approved environment."
+      ]
+    }
+  },
+  "acceptanceCriteria": {
+    "mustPass": [
+      "All existing commands continue to work: balchemy, init, start, list, docker, --help, --version, --no-color.",
+      "No CLI/TUI work touches balchemy-frontend-v2, browser pages, dashboard components, landing page, or marketing components.",
+      "--json output for supported commands parses as valid JSON and contains no ANSI escapes.",
+      "--ci never enters TUI, opens browser, shows spinner animation, prompts, or performs global update prompts.",
+      "NO_COLOR=1, TERM=dumb, --no-color, and non-TTY output contain no ANSI escapes.",
+      "No terminal output includes raw MCP API keys, LLM API keys, bearer tokens, private keys, seed phrases, DSNs, or credential-bearing URLs.",
+      "Trade confirmation cannot be approved accidentally with blank Enter and cannot be bypassed by --yes.",
+      "Wizard file writes and docker generation show dry-run/preview and require confirmation for overwrites.",
+      "Errors render title/cause/fix/command/help/exit code and stack traces appear only in --debug with redaction.",
+      "Help, README, and TUI shortcut footer agree on command names and keyboard shortcuts."
+    ],
+    "manualQa": [
+      "Run first-run setup in a TTY with no saved agents and confirm wizard sequence, secret masking, cost validation, file preview, and cockpit launch.",
+      "Run default balchemy with saved agents and confirm resume/list/new choices are clear and no accidental setup occurs.",
+      "Run cockpit at 80, 100, 109, 110, 124, and 148 columns and confirm no overflow, clipped borders, or hidden confirmation text.",
+      "Trigger provider auth failure and network timeout and confirm recovery messages are actionable.",
+      "Trigger TRADE CHECK with sample trade args and confirm context/action/amount/mode are visible and cancel path records no execution.",
+      "Run docker generation against a directory with existing Dockerfile/docker-compose.yml/.env.example and confirm preview/overwrite behavior.",
+      "Check copy-paste ergonomics of suggested commands in errors and next-step output.",
+      "Check Windows/macOS/Linux terminal behavior in approved environments or CI matrices where available."
+    ],
+    "automatedTests": [
+      "help-output.spec.ts",
+      "list-output.spec.ts",
+      "docker-output.spec.ts",
+      "config-validate-output.spec.ts",
+      "doctor-output.spec.ts",
+      "error-output.spec.ts",
+      "secret-redaction.spec.ts",
+      "ci-mode.spec.ts",
+      "color-output.spec.ts",
+      "existing text-layout/status/session tests remain green"
+    ],
+    "snapshotTests": [
+      "TUI wizard provider/API key/model/cost/agent/file-preview screens",
+      "Cockpit standard and compact layout",
+      "ChatPanel message cards for AI/YOU/TOOL/EVENT/TRADE/ERROR",
+      "StatusPanel wallet/balance/position/LLM spend states",
+      "TRADE CHECK overlay accepted/cancelled/incomplete args",
+      "Structured ErrorPanel states",
+      "Plain CLI help/list/docker/error golden output"
+    ],
+    "terminalCompatibilityChecks": [
+      "NO_COLOR=1 balchemy --help has no ANSI escapes.",
+      "TERM=dumb balchemy list has no ANSI escapes and no Unicode-only state dependency.",
+      "balchemy list --json stdout parses as JSON and stderr is empty for success.",
+      "balchemy doctor --ci --json never prompts and exits non-zero on missing required inputs.",
+      "Non-TTY balchemy start refuses TUI with TERMINAL_UNSUPPORTED_TUI rather than emitting alternate-screen escapes.",
+      "Narrow terminal render tests cover 80-column and below-110 compact layout.",
+      "Secret redaction tests cover human, JSON, verbose, debug, and TUI activity paths."
+    ]
+  },
+  "finalReviewChecklist": [
+    "Scope is CLI/TUI-only and contains no web UI/dashboard/browser frontend/landing page/marketing component recommendations.",
+    "Every changed command has human output, JSON behavior where applicable, exit code, and CI behavior defined.",
+    "Every dangerous operation has a preview/confirmation/cancel path and a statement about --yes/--force limits.",
+    "All terminal output paths use shared reporter/error/redaction utilities rather than ad hoc process.stdout/process.stderr writes where practical.",
+    "Secrets are redacted before rendering or logging, including debug mode and tests.",
+    "TUI screens show agent/context/mode before risky actions.",
+    "No state depends only on color; no-color and TERM=dumb remain readable.",
+    "Non-TTY and --ci do not enter alternate screen or prompt.",
+    "README, --help, TUI footer, and tests agree on shortcuts and command names.",
+    "Historical docs are updated or marked non-canonical to prevent spec drift.",
+    "Docker generation .env.example path behavior is tested.",
+    "Local host validation restrictions are respected; builds/tests/typechecks run only in approved container/VPS/CI contexts."
+  ],
+  "doNotDo": [
+    "Do not touch web UI.",
+    "Do not touch dashboard UI.",
+    "Do not touch browser frontend pages.",
+    "Do not touch landing page implementation.",
+    "Do not touch marketing components.",
+    "Do not edit balchemy-frontend-v2 for this CLI/TUI work.",
+    "Do not introduce plan/tier/subscription/enterprise CLI concepts.",
+    "Do not add transactional email infrastructure or email setup flows.",
+    "Do not leak backend business logic, trading internals, private endpoints, or privileged operational workflows into the public CLI.",
+    "Do not expose raw secrets, private keys, seed phrases, DSNs, tokens, bearer headers, or credential-bearing URLs in terminal output.",
+    "Do not perform real trades, wallet provisioning, approvals, withdrawals, key rotation, or wallet mutations as part of CLI/TUI UX implementation.",
+    "Do not let --yes or --force bypass live trade confirmation, policy checks, risk checks, or wallet/key safety boundaries.",
+    "Do not default prompts to yes for global installs, overwrites, live execution, production actions, credential deletion, or wallet/key operations.",
+    "Do not emit alternate-screen escape sequences outside an interactive TTY.",
+    "Do not rely on color, emoji, or Unicode-only symbols as the sole carrier of meaning.",
+    "Do not print raw stack traces outside --debug, and even debug output must be redacted.",
+    "Do not run local host pnpm/npm/node/build/typecheck/test commands for this repository; use approved container/VPS/CI contexts."
+  ]
+}

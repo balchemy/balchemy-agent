@@ -1,0 +1,27 @@
+version: "3.9"
+
+services:
+  balchemy-agent:
+    build: .
+    image: balchemy-agent:latest
+    container_name: balchemy-agent
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      # Mount config so edits take effect after restart
+      - ./agent.config.yaml:/app/agent.config.yaml:ro
+    # Expose webhook receiver port — only if webhookPort is set in config
+    # ports:
+    #   - "4242:4242"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

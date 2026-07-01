@@ -1,0 +1,71 @@
+# Balchemy Agent Configuration — Full Example
+# All three preset strategies are shown here as commented blocks.
+# Uncomment the one you want to use and delete the others.
+#
+# Environment variable references: ${VAR_NAME}
+# These are resolved from .env at startup.
+
+mcp_endpoint: "${MCP_ENDPOINT}"
+api_key: "${BALCHEMY_API_KEY}"
+
+llm:
+  provider: anthropic            # anthropic | openai
+  api_key: "${LLM_API_KEY}"
+  model: claude-haiku-4-5        # Haiku is fast + cheap, ideal for reactive trading
+  max_daily_usd: 5               # Hard budget cap. Agent pauses when hit.
+  timeout_ms: 10000
+
+# ─── Strategy: DCA Accumulator ─────────────────────────────────────────────────
+strategy: dca-accumulator
+
+behavior_rules:
+  version: "1"
+  preset: dca-accumulator
+  dca:
+    target_token: SOL
+    amount_usd: 10               # Buy $10 per interval
+    interval_hours: 24
+    max_total_usd: 1000          # Stop after $1000 invested
+  risk:
+    max_single_trade_usd: 10
+    pause_on_drawdown_pct: 30    # Pause DCA if portfolio drops 30%
+
+# ─── Strategy: Memecoin Sniper ──────────────────────────────────────────────────
+# strategy: memecoin-sniper
+# behavior_rules:
+#   version: "1"
+#   preset: memecoin-sniper
+#   filters:
+#     min_liquidity_usd: 10000
+#     max_market_cap_usd: 5000000
+#     require_verified_contract: false
+#   entry:
+#     trigger: launch_signal
+#     max_position_usd: 50
+#     slippage_bps: 300
+#   exit:
+#     take_profit_pct: 100
+#     stop_loss_pct: 50
+#     max_hold_minutes: 60
+
+# ─── Strategy: Swing Trader ────────────────────────────────────────────────────
+# strategy: swing-trader
+# behavior_rules:
+#   version: "1"
+#   preset: swing-trader
+#   entry:
+#     indicators: [rsi, macd]
+#     rsi_oversold: 30
+#     max_position_usd: 200
+#     slippage_bps: 100
+#   exit:
+#     take_profit_pct: 20
+#     stop_loss_pct: 10
+#     min_hold_hours: 2
+#     max_hold_hours: 72
+
+# ─── Webhook (optional) ─────────────────────────────────────────────────────────
+# Uncomment to receive Balchemy push events directly (faster than SSE polling)
+# webhook:
+#   port: 4242
+#   secret: "${WEBHOOK_SECRET}"

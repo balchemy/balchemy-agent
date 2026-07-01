@@ -1,0 +1,5 @@
+dist/**/__tests__/
+dist/**/*.spec.d.ts
+dist/**/*.spec.d.ts.map
+dist/**/*.spec.js
+dist/**/*.spec.js.map

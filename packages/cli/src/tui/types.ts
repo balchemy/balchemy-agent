@@ -1,0 +1,80 @@
+// src/tui/types.ts
+
+export type MessageType = "agent" | "user" | "system" | "trade" | "error";
+
+export interface ChatMessage {
+  id: string;
+  type: MessageType;
+  text: string;
+  timestamp: number;
+  /** For trade messages: token address */
+  token?: string;
+  /** For trade messages: buy/sell */
+  action?: "buy" | "sell";
+  /** For trade messages: amount in the displayed unit */
+  amount?: string;
+  amountUnit?: string;
+}
+
+export interface TradeInfo {
+  token: string;
+  action: "buy" | "sell";
+  amount: string;
+  amountUnit?: string;
+  entryPrice?: number;
+  currentPricePct?: number;
+  txSignature?: string;
+  timestamp: number;
+}
+
+export interface TradeConfirmationDetails {
+  preview: string;
+  intent: string;
+  action: string;
+  token: string;
+  amount: string;
+  amountUnit?: string;
+  chain: string;
+  approvalPhrase: string;
+  canApprove: boolean;
+  blockReason?: string;
+  rawArgs: Record<string, unknown>;
+}
+
+export interface WalletInfo {
+  chain: "solana" | "base";
+  address: string;
+}
+
+export interface StatusData {
+  balanceSol: number;
+  balanceUsd: number;
+  wallets: WalletInfo[];
+  activeTrades: TradeInfo[];
+  eventsReceived: number;
+  decisionsExecuted: number;
+  tradesExecuted: number;
+  llmCostToday: number;
+  maxDailyLlmCost: number;
+  uptime: number;
+  sseConnected: boolean;
+  status: string;
+  provider?: string;
+  model?: string;
+}
+
+export interface TuiConfig {
+  mcpEndpoint: string;
+  apiKey: string;
+  llmProvider: string;
+  llmApiKey: string;
+  llmModel?: string;
+  llmBaseUrl?: string;
+  maxDailyLlmCost?: number;
+  llmTimeoutMs?: number;
+  publicId: string;
+  strategy: string;
+  shadowMode: boolean;
+  behaviorRules?: Record<string, unknown>;
+  autoSeedSubscriptions?: boolean;
+}
