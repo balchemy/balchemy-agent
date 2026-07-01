@@ -34,7 +34,7 @@
       "Whether the public CLI roadmap wants separate balchemy auth/config/profile commands or prefers wizard-only onboarding in the short term.",
       "Whether package consumers rely on current exact stdout strings from balchemy list or balchemy docker.",
       "Whether future machine-readable output should be strict JSON only or support NDJSON event streams for long-running commands.",
-      "Whether npx execution should keep checking npm registry on every interactive launch or move update checks behind an explicit command."
+      "Whether a future explicit update-check command is worth adding now that interactive launch no longer checks the npm registry."
     ]
   },
   "researchBasis": {
@@ -450,12 +450,11 @@
         "severity": "medium",
         "area": "safety-ux-updates",
         "affectedCommandsOrFiles": [
-          "create-balchemy-agent/src/index.ts",
-          "checkForUpdate()"
+          "create-balchemy-agent/src/index.ts"
         ],
-        "problem": "The update prompt defaults to yes before running npm install -g balchemy@latest and possibly re-execing the CLI.",
+        "problem": "Resolved for the release-prep line: interactive launch no longer performs an automatic npm registry update check or suggests global installs.",
         "whyItMatters": "Global installs are shared-system mutations. Safe CLI defaults should not turn Enter into a global package update, especially in terminal contexts where users may expect launch continuation.",
-        "recommendedFix": "Default update prompt to no, skip entirely in --ci/non-TTY, and offer explicit balchemy update/check command or a non-blocking hint. Project instructions also state public SDK/CLI must not run periodic self-update loops or background global installs.",
+        "recommendedFix": "Keep update checks behind an explicit future command if one is added. Project instructions also state public SDK/CLI must not run periodic self-update loops or background global installs.",
         "priority": "P1"
       },
       {
@@ -493,7 +492,7 @@
         "id": "safe-defaults",
         "principle": "Enter must never approve live execution, global installs, overwrites, credential writes, or production context actions by accident.",
         "appliesTo": [
-          "checkForUpdate()",
+          "future explicit update-check command",
           "Wizard finalize",
           "docker-gen.ts",
           "trade_command confirmation"
@@ -2154,7 +2153,7 @@
         "Add balchemy config validate/list/get/set read-first surfaces.",
         "Add balchemy doctor for local CLI readiness checks.",
         "Add --json support to list/current/auth status/config validate/doctor/docker dry-run/version.",
-        "Skip update checks for help/version/json/ci/non-TTY and default update confirmation to no."
+        "Remove automatic launch-time update checks; leave any future registry check behind an explicit command."
       ],
       "tests": [
         "list-output.spec.ts human/json/empty/active/truncation",

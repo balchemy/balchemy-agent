@@ -5,8 +5,8 @@ FROM node:20-slim
 
 WORKDIR /app
 
-# Install the published CLI and SDK package names.
-RUN npm install -g @balchemyai/agent-sdk balchemy
+# Install the published CLI and SDK package names locally inside the image.
+RUN npm install --omit=dev @balchemyai/agent-sdk@0.3.10 balchemy@0.3.10
 
 # Copy non-secret user config files; inject runtime secrets via env/secret mounts.
 COPY agent.config.yaml ./
@@ -16,4 +16,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
   CMD node -e "process.exit(0)"
 
 # Run the agent loop
-CMD ["balchemy", "start", "/app/agent.config.yaml"]
+CMD ["./node_modules/.bin/balchemy", "start", "/app/agent.config.yaml"]

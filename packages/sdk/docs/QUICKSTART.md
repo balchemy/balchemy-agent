@@ -1,25 +1,27 @@
 # Balchemy Agent — Quickstart
 
-Get an autonomous trading agent running in under 5 minutes.
+Connect a local CLI/SDK runner to a Balchemy Hub agent in under 5 minutes.
 
 ---
 
 ## Prerequisites
 
 - Node.js 18+ (or Docker)
-- A Balchemy account with at least one agent created in the Hub
-- An API key from Hub > Agents > your agent > API Keys
+- A Balchemy account with at least one Hub agent, or an explicit walletless
+  onboarding flow
+- A scoped MCP/API key from Hub > Agents > your agent > Access/API Keys
 - An LLM API key (Anthropic or OpenAI)
 
 ---
 
-## Step 1: Create an agent in the Hub
+## Step 1: Create or select a Hub agent
 
 1. Go to [balchemy.ai](https://balchemy.ai) and sign in
 2. Open Hub > Agents > New Agent
-3. Complete the setup wizard (wallets, trading config, connect)
-4. Copy the MCP endpoint from the API tab: `https://api.balchemy.ai/mcp/YOUR_PUBLIC_ID`
-5. Generate an API key and copy it (shown once)
+3. Complete the setup wizard enough to create the agent and runtime state
+4. Open the agent Access/API key flow
+5. Copy the MCP endpoint: `https://api.balchemy.ai/mcp/YOUR_PUBLIC_ID`
+6. Generate a scoped API key and copy it (shown once)
 
 ---
 
@@ -30,36 +32,41 @@ npx balchemy
 ```
 
 The wizard asks:
-- MCP endpoint
-- Balchemy API key
-- LLM provider (Anthropic or OpenAI) + API key + model
-- Daily LLM budget (USD)
-- Strategy preset
+- LLM provider, API key, and model
+- New walletless agent or existing MCP endpoint/API key
+- Strategy preset and natural-language behavior rules
+- Whether to open the local cockpit
 
-It writes `agent.config.yaml` and `.env` to the current directory.
+New walletless agents are provisioned first. Root/recovery wallet binding and
+chain-specific setup happen later through the authenticated MCP setup flow.
+Existing agents can be resumed from the encrypted local agent store.
 
 ---
 
-## Step 3: Start the agent
+## Step 3: Start the local runner
 
 ```bash
 npx balchemy start
 ```
 
-You should see:
-
-```
-Starting Balchemy agent from: /path/to/agent.config.yaml
-[agent] Running. Press Ctrl+C to stop.
-[agent] status=running events=0 decisions=0 trades=0 llmCost=$0.0000/5
-```
-
 The agent:
 1. Connects to the Balchemy SSE event stream
 2. Receives market signals and platform events
-3. Calls your LLM to decide whether to buy, sell, or hold
-4. Executes approved trades via MCP tool calls
-5. Can be monitored and adjusted through the Balchemy CLI cockpit (`npx balchemy`)
+3. Fetches fresh `agent_status` and behavior rules before asking your LLM to
+   decide whether to buy, sell, hold, block, or mark data degraded
+4. Blocks trade calls in `shadow`, `live_unarmed`, `paused`, stale status, or
+   missing-rule states
+5. Calls `trade_command` only when local live mode and backend runtime are both
+   live-armed and the policy/approval path allows it
+6. Can be monitored and adjusted through the Balchemy CLI cockpit (`npx balchemy`)
+
+`shadow_mode` remains the safe default. Setting local `shadow_mode: false` is
+not enough to trade; the backend must report `autonomous_runtime.mode` as
+`live_armed`, `armed=true`, and `paused=false`.
+
+This quickstart does not claim live-trade proof, Base live coverage, or
+source-owner payout rails. Verify those from current runtime/backend evidence
+before relying on them.
 
 ---
 
@@ -83,11 +90,6 @@ The generated `docker-compose.yml` runs the agent with:
 ```typescript
 import { AgentLoop } from '@balchemyai/agent-sdk';
 
-// From YAML config file
-const loop = AgentLoop.fromConfig('./agent.config.yaml');
-await loop.start();
-
-// Or inline config
 const statusEvents: string[] = [];
 const decisionEvents: unknown[] = [];
 const errorEvents: string[] = [];
@@ -105,6 +107,15 @@ const loop2 = new AgentLoop({
 });
 await loop2.start();
 ```
+
+The SDK constructs `AgentLoop` from explicit config. Use `npx balchemy start`
+when you want the CLI to load `agent.config.yaml` for you.
+
+For read-first integrations, use `connectMcp()`/`listTools()` and call only the
+runtime-advertised tools. Safe read wrappers include `agent_status`,
+`agent_context_snapshot`, `agent_market_brief`, `agent_candidate_report`, and
+`agent_risk_report`. Raw provider, approval, withdrawal, swap-bypass, and
+privileged manage surfaces are not public SDK helpers.
 
 ---
 

@@ -25,7 +25,6 @@ import {
   commandKey,
   isNonInteractive,
   parseCliArgs,
-  type CliFlags,
 } from "./cli-options.js";
 import {
   compactValue,
@@ -154,47 +153,6 @@ async function chooseSavedAgent(
     return agents[index - 1] ?? null;
   }
   return agents.find((agent) => agent.publicId.toLowerCase() === answer) ?? null;
-}
-
-function parseSemver(value: string): [number, number, number] | null {
-  const match = value.match(/^(\d+)\.(\d+)\.(\d+)/);
-  if (!match) return null;
-  return [Number(match[1]), Number(match[2]), Number(match[3])];
-}
-
-function isNewerVersion(latest: string, current: string): boolean {
-  const latestParts = parseSemver(latest);
-  const currentParts = parseSemver(current);
-  if (!latestParts || !currentParts) return latest !== current;
-  for (let index = 0; index < latestParts.length; index += 1) {
-    if (latestParts[index] > currentParts[index]) return true;
-    if (latestParts[index] < currentParts[index]) return false;
-  }
-  return false;
-}
-
-function shouldCheckForUpdate(flags: CliFlags): boolean {
-  if (flags.json || flags.ci || flags.help || flags.version || isNonInteractive(flags)) return false;
-  return cmd === "" || cmd === "init" || cmd === "start";
-}
-
-async function checkForUpdate(flags: CliFlags): Promise<void> {
-  if (!shouldCheckForUpdate(flags)) return;
-
-  try {
-    const res = await fetch("https://registry.npmjs.org/balchemy/latest", {
-      signal: AbortSignal.timeout(3000),
-    });
-    if (!res.ok) return;
-    const data = (await res.json()) as { version?: string };
-    const latest = data.version;
-    if (!latest || !isNewerVersion(latest, CLI_VERSION)) return;
-
-    reporter.warn(`\n  ${C.G}Update available${C.R} ${C.D}${CLI_VERSION}${C.R} → ${C.T}${latest}${C.R}\n`);
-    reporter.warn(`  ${C.D}Run ${C.W}npm install -g balchemy@${latest}${C.D} yourself if you want to update.${C.R}\n\n`);
-  } catch {
-    return;
-  }
 }
 
 function printHelp(): void {
@@ -1104,8 +1062,6 @@ async function main(): Promise<void> {
     printVersion();
     return;
   }
-
-  await checkForUpdate(parsed.flags);
 
   switch (cmd) {
     case "init":

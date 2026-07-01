@@ -8,6 +8,13 @@ Balchemy does not ask an inner model to make trade decisions. Your outer LLM
 chooses tools. Balchemy checks policy, executes through the authorized path, and
 keeps the record.
 
+## Release Line
+
+This source tree is prepared for `@balchemyai/agent-sdk@0.3.10`. npm publish,
+public mirror sync, and live package installation proof happen in separate
+release steps; this README does not claim that `0.3.10` has already been
+published.
+
 ## Install
 
 ```sh
@@ -131,6 +138,10 @@ Use `agent_status` for read-scope runtime state. Safe read wrappers are
 `AgentLoop` fails closed before `trade_command`: local `shadowMode=false` is not
 enough. The backend runtime must report `autonomous_runtime.mode=live_armed`,
 `armed=true`, and `paused=false` from a fresh `agent_status` response.
+
+The public SDK does not claim live-trade proof, Base live coverage, or
+source-owner payout rails. Treat those as runtime/backend facts that must be
+verified from current advertised tools and production evidence before use.
 
 ## Errors
 

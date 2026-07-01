@@ -39,6 +39,10 @@ Strategy -> external LLM -> Balchemy MCP -> policy -> approved action -> record
 npx balchemy
 ```
 
+This source tree is prepared for `balchemy@0.3.10`. npm publish, public mirror
+sync, and live package installation proof are separate release steps; this
+README does not claim that `0.3.10` has already been published.
+
 The wizard handles five local steps:
 
 1. Choose an LLM provider.
@@ -143,6 +147,14 @@ control through `agent_control`, and approved trade commands.
 
 Raw/internal direct research, broad discovery, and portfolio snapshot tools stay
 hidden unless they are returned by `tools/list` for that bot.
+
+The CLI does not run an automatic npm registry update check during launch and
+does not prompt for global installs. Use npm directly when you intentionally
+choose to update a package.
+
+The CLI does not claim live-trade proof, Base live coverage, or source-owner
+payout rails. Runtime execution requires current `tools/list` exposure, scope,
+policy, approval, and a fresh backend `live_armed` state.
 
 ## LLM Providers
 

@@ -3,5 +3,6 @@ dist/
 .env
 *.env
 agent.config.yaml
+!packages/cli/templates/agent.config.yaml
 .DS_Store
 *.tgz

@@ -7,6 +7,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.3.10] — 2026-06-30
+
+### Changed
+
+- Prepare the SDK and CLI package line for the next coordinated patch release.
+- Align package examples and docs with default MCP exposure, safe read wrappers,
+  Hub Access, walletless setup, and live-armed fail-closed boundaries.
+- Remove the CLI automatic npm registry update check from launch paths and stop
+  package docs/templates from suggesting global installs.
+- Build CLI package output from a production `tsconfig` so package dist does not
+  include compiled test artifacts.
+
+### Notes
+
+- This is a release-prep source entry only. npm publish, public mirror sync, and
+  live package install proof remain separate release steps.
+- No live-trade proof, Base live coverage, or source-owner payout rails are
+  claimed by this package release.
+- Publish `@balchemyai/agent-sdk@0.3.10` before `balchemy@0.3.10` so the CLI
+  dependency resolves from npm semver.
+
 ## [0.3.7] — 2026-06-08
 
 ### Fixed
@@ -221,8 +242,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - `getIdentityTokenRevokeStatus()` — check revocation status
   - `connectMcp()` — instantiate a typed MCP client
 - `BalchemyMcpClient` — JSON-RPC MCP client with automatic retry and SSE envelope parsing
-  - Typed convenience methods: `askBot`, `tradeCommand`, `agentExecute`, `agentResearch`, `agentPortfolio`, `agentStatus`, `agentConfig`
-  - EVM helpers: `evmQuote`, `evmSwap`
+  - Historical early typed helpers were narrowed in later releases. Current
+    public convenience methods are the safe helper surface: `askBot`,
+    `agentStatus`, `agentReadinessReport`, `agentContextSnapshot`,
+    `agentMarketBrief`, `agentCandidateReport`, and `agentRiskReport`.
+  - Direct quote, swap, wallet mutation, and privileged instruction helpers are
+    not exposed as typed public SDK methods. Use `tools/list` and `callTool()`
+    for the current scoped MCP surface.
   - `requestSeed()` — disabled stub (throws `AgentSdkError` deterministically)
   - `listTools()`, `callTool()`, `ping()`
 - `connectMcp()` — factory shortcut for `BalchemyMcpClient`

@@ -104,10 +104,12 @@ Similar to Railway. Use Render's "Background Worker" service type (not Web Servi
 
 If you prefer to run the agent directly as a system service:
 
-**1. Install globally:**
+**1. Install locally in the agent directory:**
 
 ```bash
-npm install -g balchemy
+cd /home/ubuntu/agent
+npm init -y
+npm install --omit=dev balchemy@0.3.10 @balchemyai/agent-sdk@0.3.10
 ```
 
 **2. Create a systemd unit file:**
@@ -122,7 +124,7 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/agent
-ExecStart=/usr/bin/balchemy start /home/ubuntu/agent/agent.config.yaml
+ExecStart=/home/ubuntu/agent/node_modules/.bin/balchemy start /home/ubuntu/agent/agent.config.yaml
 EnvironmentFile=/home/ubuntu/agent/.env
 Restart=always
 RestartSec=10
@@ -186,7 +188,7 @@ logging:
 
 **Agent starts but makes no decisions:**
 - Verify your API key has `trade` scope (Hub > API Keys > Scopes)
-- Check that your agent has a funded wallet
+- Check that setup is complete and the backend reports the expected runtime mode
 - Lower `min_confidence` in `behavior_rules`
 
 **Budget exhausted quickly:**

@@ -32,7 +32,7 @@ async function run(): Promise<void> {
     apiKey,
   });
 
-  const status = await mcp.callTool("trading_evm_status", {});
+  const status = await mcp.callTool("agent_status", {});
   process.stdout.write(JSON.stringify(status));
 }
 
