@@ -10,10 +10,12 @@ keeps the record.
 
 ## Release Line
 
-This source tree is prepared for `@balchemyai/agent-sdk@0.3.10`. npm publish,
+This source tree is prepared for `@balchemyai/agent-sdk@0.3.11`. npm publish,
 public mirror sync, and live package installation proof happen in separate
-release steps; this README does not claim that `0.3.10` has already been
+release steps; this README does not claim that `0.3.11` has already been
 published.
+
+`0.3.11` fixes the incomplete SDK root export surface shipped in `0.3.10`.
 
 ## Install
 
@@ -30,6 +32,9 @@ const sdk = new BalchemyAgentSdk({
   apiBaseUrl: "https://api.balchemy.ai/api",
 });
 ```
+
+`BalchemyClient` is exported as an alias for `BalchemyAgentSdk` for consumers
+that use the shorter root import name.
 
 `apiBaseUrl` includes `/api` and has no trailing slash.
 
@@ -133,7 +138,10 @@ hidden unless they are returned by `tools/list` for that bot.
 
 Use `agent_status` for read-scope runtime state. Safe read wrappers are
 `agent_context_snapshot`, `agent_market_brief`, `agent_candidate_report`, and
-`agent_risk_report`. Runtime mutation uses manage-scope `agent_control`.
+`agent_risk_report`. Runtime mutation uses manage-scope `agent_control`. The SDK
+root also exports `agentReadinessReport`, `agentContextSnapshot`,
+`agentMarketBrief`, `agentCandidateReport`, and `agentRiskReport` helpers that
+delegate to a connected `BalchemyMcpClient`.
 
 `AgentLoop` fails closed before `trade_command`: local `shadowMode=false` is not
 enough. The backend runtime must report `autonomous_runtime.mode=live_armed`,

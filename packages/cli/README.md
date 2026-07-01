@@ -39,9 +39,12 @@ Strategy -> external LLM -> Balchemy MCP -> policy -> approved action -> record
 npx balchemy
 ```
 
-This source tree is prepared for `balchemy@0.3.10`. npm publish, public mirror
+This source tree is prepared for `balchemy@0.3.11`. npm publish, public mirror
 sync, and live package installation proof are separate release steps; this
-README does not claim that `0.3.10` has already been published.
+README does not claim that `0.3.11` has already been published.
+
+`0.3.11` pairs with `@balchemyai/agent-sdk@0.3.11` to recover the incomplete SDK
+root export surface shipped in `0.3.10`.
 
 The wizard handles five local steps:
 

@@ -109,7 +109,7 @@ If you prefer to run the agent directly as a system service:
 ```bash
 cd /home/ubuntu/agent
 npm init -y
-npm install --omit=dev balchemy@0.3.10 @balchemyai/agent-sdk@0.3.10
+npm install --omit=dev balchemy@0.3.11 @balchemyai/agent-sdk@0.3.11
 ```
 
 **2. Create a systemd unit file:**

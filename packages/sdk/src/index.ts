@@ -2,9 +2,16 @@ import { HttpClient } from "./client/http-client";
 import { AgentOnboardingClient } from "./auth/onboarding";
 import { BalchemyMcpClient, connectMcp } from "./mcp/mcp-client";
 import type {
+  AgentAssetReportArgs,
+  AgentMarketBriefArgs,
+  AgentReadinessReportArgs,
+  SafeToolSessionArgs,
+} from "./mcp/mcp-client";
+import type {
   AgentSdkConfig,
   IdentityTokenRevokeResponse,
   IdentityTokenRevokeStatusInput,
+  McpCallToolResponse,
   OnboardWithIdentityInput,
   OnboardWithSiweInput,
   OnboardingResponse,
@@ -37,10 +44,14 @@ export type { AgentSdkErrorCode } from "./errors/error-codes";
 export { AgentSdkError } from "./errors/agent-sdk-error";
 export { BalchemyMcpClient, connectMcp, getToolText, parseToolJson, isToolError } from "./mcp/mcp-client";
 export type {
+  AgentAssetReportArgs,
+  AgentMarketBriefArgs,
+  AgentReadinessReportArgs,
   AskBotArgs,
   McpBatchToolCallInput,
   McpBatchToolCallResult,
   McpHealthResponse,
+  SafeToolSessionArgs,
 } from "./mcp/mcp-client";
 export { SseEventStream } from "./streaming/sse-event-stream";
 export type { SseEvent, SseStreamOptions } from "./streaming/sse-event-stream";
@@ -72,6 +83,41 @@ export type {
   LlmResponse,
   LlmProvider,
 } from './agent-loop/types';
+
+export function agentReadinessReport(
+  client: BalchemyMcpClient,
+  args: AgentReadinessReportArgs = {}
+): Promise<McpCallToolResponse> {
+  return client.agentReadinessReport(args);
+}
+
+export function agentContextSnapshot(
+  client: BalchemyMcpClient,
+  args: SafeToolSessionArgs = {}
+): Promise<McpCallToolResponse> {
+  return client.agentContextSnapshot(args);
+}
+
+export function agentMarketBrief(
+  client: BalchemyMcpClient,
+  args: AgentMarketBriefArgs = {}
+): Promise<McpCallToolResponse> {
+  return client.agentMarketBrief(args);
+}
+
+export function agentCandidateReport(
+  client: BalchemyMcpClient,
+  args: AgentAssetReportArgs
+): Promise<McpCallToolResponse> {
+  return client.agentCandidateReport(args);
+}
+
+export function agentRiskReport(
+  client: BalchemyMcpClient,
+  args: AgentAssetReportArgs
+): Promise<McpCallToolResponse> {
+  return client.agentRiskReport(args);
+}
 
 export class BalchemyAgentSdk {
   private readonly onboarding: AgentOnboardingClient;
@@ -121,3 +167,5 @@ export class BalchemyAgentSdk {
     return connectMcp(params);
   }
 }
+
+export { BalchemyAgentSdk as BalchemyClient };

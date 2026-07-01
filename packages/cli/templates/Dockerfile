@@ -6,7 +6,7 @@ FROM node:20-slim
 WORKDIR /app
 
 # Install the published CLI and SDK package names locally inside the image.
-RUN npm install --omit=dev @balchemyai/agent-sdk@0.3.10 balchemy@0.3.10
+RUN npm install --omit=dev @balchemyai/agent-sdk@0.3.11 balchemy@0.3.11
 
 # Copy non-secret user config files; inject runtime secrets via env/secret mounts.
 COPY agent.config.yaml ./

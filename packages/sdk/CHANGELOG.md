@@ -7,6 +7,25 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.3.11] — 2026-07-01
+
+### Fixed
+
+- Recover the `0.3.10` npm release by restoring the complete SDK root export
+  surface for `BalchemyClient`, `agentReadinessReport`, `agentContextSnapshot`,
+  `agentMarketBrief`, `agentCandidateReport`, and `agentRiskReport`.
+- Keep the paired `balchemy` CLI dependency aligned with
+  `@balchemyai/agent-sdk@0.3.11`.
+
+### Notes
+
+- `0.3.10` was published with an incomplete SDK root export surface; consumers
+  should use `0.3.11` instead.
+- No live-trade proof, Base live coverage, or source-owner payout rails are
+  claimed by this package release.
+- Publish `@balchemyai/agent-sdk@0.3.11` before `balchemy@0.3.11` so the CLI
+  dependency resolves from npm semver.
+
 ## [0.3.10] — 2026-06-30
 
 ### Changed
@@ -23,6 +42,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - This is a release-prep source entry only. npm publish, public mirror sync, and
   live package install proof remain separate release steps.
+- The published `0.3.10` package pair has an incomplete SDK root export surface;
+  use `0.3.11` instead.
 - No live-trade proof, Base live coverage, or source-owner payout rails are
   claimed by this package release.
 - Publish `@balchemyai/agent-sdk@0.3.10` before `balchemy@0.3.10` so the CLI
