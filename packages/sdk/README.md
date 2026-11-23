@@ -1,21 +1,27 @@
 # @balchemyai/agent-sdk
 
-TypeScript SDK for external agents that connect to Balchemy through MCP. Use it
-to onboard an agent, request scoped access, call tools, refresh tokens, and
-consume SSE events.
+TypeScript SDK for the Balchemy local runner. It holds the signed runner
+protocol clients (pairing, control, runtime, research, assessment, execution,
+signals, launchpad subscriptions, RPC access) and the local LLM adapters that
+the `balchemy` CLI runner uses. The SDK holds no keys; the runner signs.
 
-Balchemy does not ask an inner model to make trade decisions. Your outer LLM
-chooses tools. Balchemy checks policy, executes through the authorized path, and
-keeps the record.
+Balchemy does not ask an inner model to make trade decisions. The runner's
+outer brain decides, Balchemy checks policy, executes through the authorized
+path, and keeps the record.
+
+The MCP client, the ERC-8004 onboarding flow, the token store, SSE streaming and
+the external agent loop were removed in `0.9.0` (see the changelog). Earlier
+versions are not deprecated, but they are no longer developed.
 
 ## Release Line
 
-This source tree is prepared for `@balchemyai/agent-sdk@0.3.11`. npm publish,
-public mirror sync, and live package installation proof happen in separate
-release steps; this README does not claim that `0.3.11` has already been
-published.
+The SDK and the `balchemy` CLI ship together at the same version; publish the
+SDK first, then the CLI. Version `0.4.0` added the local-runner protocol clients
+and `0.9.0` removed the legacy MCP and onboarding surfaces (see the changelog).
 
-`0.3.11` fixes the incomplete SDK root export surface shipped in `0.3.10`.
+The ownership model keeps trading keys, model calls and private agent context in
+the user's background runner. Local pairing and signing do not by themselves
+authorize live trading.
 
 ## Install
 
@@ -23,133 +29,126 @@ published.
 npm install @balchemyai/agent-sdk
 ```
 
-## Create a Client
+## Unreleased local runner identity client
+
+`RunnerPairingClient` is the candidate public client for fixed-purpose pairing
+reads. It uses the configured Hub origin's `/api` proxy, rejects redirects, and
+accepts no owner session token. It does not create wallets, issue execution
+credentials, or enable trading.
+
+Pin `frontendOrigin`, `apiBaseUrl` (`frontendOrigin + "/api"`), the runner's
+Ed25519 public key and its locally generated intent. Request a nonce for exactly
+one challenge or receipt read, validate its fixed-purpose bytes with
+`runnerPairingReadMessage`, and sign those bytes with the dedicated local runner
+identity. Do not use a trading-wallet key or expose a general supplied-text
+signer. The CLI implements this private-key boundary; the SDK holds no keys.
+
+Receipt reads require the binding digest durably saved at deliberate local
+approval. `validateRunnerPairingBinding` validates a public binding only; it is
+not proof that a request is still pending or that pairing committed.
+`validateRunnerPairingResponse` separately checks the pending request or matching
+committed receipt. A receipt can be recovered after the original request expires,
+but its committed time must fall within that original validity window. Failed
+reads are not automatically replayed; explicit recovery obtains a fresh nonce.
+
+This candidate protocol must be released with its matching backend and CLI.
+Source tests do not establish deployed availability or full local-agent readiness.
+
+## Unreleased local runner research client
+
+`RunnerResearchClient` connects a durably paired runner to three public reports:
+`market_brief`, `candidate_report` and `risk_report`, for Solana or Base. Requests
+contain closed public fields such as the chain and exact asset address; they do
+not accept chat, prompts, rules, credentials, arbitrary tools or URLs.
+
+Pin the adopted origin, agent, binding digest, runner public key and current
+instance. Call `query(request, epoch, signal)` only while the matching runner
+lease remains current. Its signer must validate `runnerResearchNonceMessage`
+against that exact target and request before signing with the dedicated local
+identity. The CLI implements this check; a trading-wallet key is not used.
+
+One deadline covers nonce, signing, request and body reading. Redirects and
+automatic retries are disabled. A returned `result.ok` describes tool completion:
+the report may still contain missing, stale or held evidence. Inspect its report
+data and observation times; neither the report nor the lease authorizes a trade.
+This candidate requires matching unreleased backend/CLI code. Published package
+and deployed availability remain separate from the isolated interoperability tests.
+
+## Unreleased local Solana assessment client
+
+`RunnerAssessmentClient` requests a read-only assessment for an exact SOL-input
+plan: token, integer lamports, slippage and plan digest. The backend supplies the
+existing global swap fee; the request cannot choose the fee or recipient. The
+response binds fee arithmetic, quote amounts and token-safety observations to
+that same request. It never contains a transaction or authorizes execution.
+
+Pin the adopted origin, agent, binding, runner key and active lease instance.
+Before signing, validate `runnerAssessmentNonceMessage` against that target,
+epoch and exact request. Use the dedicated runner identity, never a trading key.
+`query(request, epoch, signal)` has one bounded deadline and no automatic retry.
+Private rules, prompts, model credentials and signing keys are not request fields.
+
+`status: "complete"` means the required read sources returned usable observations;
+the safety verdict can still be `block` or `require_approval`. Partial provider
+failure remains `unavailable`, and every result has `executionAvailable: false`.
+The client checks exact fee conservation, quote bounds, request/digest binding
+and expiry. Fetch observation times do not establish an upstream publication time.
+This candidate needs the matching unreleased backend and engine. Connection to
+the private plan consumer, installed-package and deployed acceptance remain open.
+
+## Unreleased local signal receipt client
+
+`RunnerSignalsClient` uses the same paired identity and current lease boundary.
+Validate `runnerSignalsNonceMessage` against the exact target and request before
+signing with the dedicated runner identity. `query({ kind: "poll" }, epoch)`
+returns at most 16 unacknowledged public Solana observations from verified
+Telegram/Discord sources. Historical observations remain deliverable; the
+consumer must check freshness before evaluating them.
+
+Persist each complete event locally before explicitly calling
+`query({ kind: "ack", eventId, eventDigest }, epoch)`. The client never ACKs or
+retries automatically. An ACK records receipt only; it is not a decision,
+approval or trade. Retain the original event ID and digest across recovery.
+This candidate requires the matching backend. The managed daemon consumer,
+local source setup UI, onchain signals and Base delivery are not yet connected;
+published availability and end-to-end automation are not established.
+
+## Unreleased local model client
+
+`createLocalLlmAdapter` makes a text request directly from the caller's process to
+the explicitly selected OpenAI or Anthropic provider. It requires an explicit
+model; it does not select a cheaper model, retry, or fall back to Balchemy. Supply
+the API key from the user's local secret source and never log the configuration.
 
 ```ts
-import { BalchemyAgentSdk } from "@balchemyai/agent-sdk";
+import { createLocalLlmAdapter } from '@balchemyai/agent-sdk';
 
-const sdk = new BalchemyAgentSdk({
-  apiBaseUrl: "https://api.balchemy.ai/api",
+const model = createLocalLlmAdapter({
+  provider: 'openai',
+  model: selectedModel,
+  apiKey: locallyLoadedApiKey,
+  timeoutMs: 30_000,
 });
+const result = await model.chat(localMessages, 1_000, { signal: shutdownSignal });
 ```
 
-`BalchemyClient` is exported as an alias for `BalchemyAgentSdk` for consumers
-that use the shorter root import name.
+OpenAI-compatible `baseUrl` requires HTTPS; plain HTTP is limited to numeric
+loopback (`127.0.0.1` or `[::1]`). An explicitly supplied `fetchFn` receives private
+messages and provider credentials and must remain in the user's trusted process.
+Redirects are rejected. Timeout and cancellation cover response-body reading; an
+aborted request may still have run or incurred cost at the provider, so this client
+never retries automatically. Errors omit raw provider bodies and transport causes.
 
-`apiBaseUrl` includes `/api` and has no trailing slash.
+Only complete text responses are accepted. Truncation, refusal, tool calls and
+unsupported content blocks fail closed. OpenAI `stop` and Anthropic `end_turn`
+follow their respective [Chat Completions](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
+and [Messages](https://platform.claude.com/docs/en/api/messages/create) contracts.
+The existing internal adapters keep their legacy default models; this new factory
+requires the caller's choice. Provider classes and execution internals remain private.
 
-## Auth Path 1: SIWE
-
-Use this path when the agent controls a wallet and can sign an off-chain
-message.
-
-```ts
-import { BalchemyAgentSdk } from "@balchemyai/agent-sdk";
-
-const sdk = new BalchemyAgentSdk({
-  apiBaseUrl: "https://api.balchemy.ai/api",
-});
-
-const { message } = await sdk.requestSiweNonce({
-  address: "YOUR_WALLET_ADDRESS",
-  chainId: 8453,
-  domain: "agent.example.com",
-  uri: "https://agent.example.com",
-  statement: "Sign in to Balchemy",
-});
-
-const signature = await wallet.signMessage(message);
-
-const response = await sdk.onboardWithSiwe({
-  message,
-  signature,
-  agentId: "agent-example",
-  scope: "trade",
-});
-
-const mcp = sdk.connectMcp({
-  endpoint: response.mcp.endpoint,
-  apiKey: response.mcp.apiKey ?? "",
-});
-```
-
-## Auth Path 2: Walletless Identity
-
-Use this path when the platform operator has registered an identity provider and
-the agent holds a valid HMAC identity token or ES256 JWT.
-
-```ts
-import { BalchemyAgentSdk } from "@balchemyai/agent-sdk";
-
-const sdk = new BalchemyAgentSdk({
-  apiBaseUrl: "https://api.balchemy.ai/api",
-});
-
-const response = await sdk.onboardWithIdentity({
-  provider: "registered-provider-id",
-  identityToken: "PROVIDER_JWT",
-  agentId: "agent-example",
-  chainId: 8453,
-  scope: "trade",
-});
-
-const mcp = sdk.connectMcp({
-  endpoint: response.mcp.endpoint,
-  apiKey: response.mcp.apiKey ?? "",
-});
-```
-
-If the endpoint returns `FEATURE_DISABLED`, the backend needs
-`AGENT_WALLETLESS_ONBOARDING_ENABLED=true`.
-
-## MCP Calls
-
-```ts
-const { tools } = await mcp.listTools();
-
-const reply = await mcp.askBot({
-  message: "What is the price of SOL?",
-});
-```
-
-For other tools, call the runtime-advertised name returned by `tools/list`:
-
-```ts
-const research = await mcp.callTool("ask_bot", {
-  message: "Find low-risk Base setups with deep liquidity.",
-});
-```
-
-The SDK does not expose typed swap/trade helper methods from the root client.
-Privileged tools require the backend-advertised tool surface, the right MCP key
-scope, replay/rate protection, and the approved product flow.
-
-## Scope
-
-| Scope | Access |
-| --- | --- |
-| `read` | Runtime-advertised market data, status, and read-only query tools |
-| `trade` | Read tools plus trade execution tools |
-
-The default MCP endpoint exposes a curated agent-facing surface for chat,
-execution, setup, behavior rules, runtime status, safe reports, runtime control,
-and subscriptions. Raw research, discovery, and portfolio snapshot tools stay
-hidden unless they are returned by `tools/list` for that bot.
-
-Use `agent_status` for read-scope runtime state. Safe read wrappers are
-`agent_context_snapshot`, `agent_market_brief`, `agent_candidate_report`, and
-`agent_risk_report`. Runtime mutation uses manage-scope `agent_control`. The SDK
-root also exports `agentReadinessReport`, `agentContextSnapshot`,
-`agentMarketBrief`, `agentCandidateReport`, and `agentRiskReport` helpers that
-delegate to a connected `BalchemyMcpClient`.
-
-`AgentLoop` fails closed before `trade_command`: local `shadowMode=false` is not
-enough. The backend runtime must report `autonomous_runtime.mode=live_armed`,
-`armed=true`, and `paused=false` from a fresh `agent_status` response.
-
-The public SDK does not claim live-trade proof, Base live coverage, or
-source-owner payout rails. Treat those as runtime/backend facts that must be
-verified from current advertised tools and production evidence before use.
+This unreleased library boundary does not install a background service, attach a
+private brain, persist memory, provision a wallet or authorize trading. It does not
+establish deployed or real-provider acceptance for the owner-local runner.
 
 ## Errors
 
@@ -176,135 +175,18 @@ function toSdkFailure(err: unknown): SdkFailure | null {
 }
 ```
 
-Known codes include `auth_error`, `policy_error`, `rate_limit`,
+Known codes include `auth_error`, `policy_error`, `rate_limit_error`,
 `provider_auth_error`, `network_error`, `execution_error`, and
 `invalid_response`.
 
-## Tool Response Helpers
-
-```ts
-import { getToolText, isToolError, parseToolJson } from "@balchemyai/agent-sdk";
-
-const response = await mcp.callTool("agent_status", {});
-
-const status = isToolError(response)
-  ? { error: getToolText(response) }
-  : { data: parseToolJson(response) };
-```
-
-## Token Store
-
-```ts
-import { TokenStore } from "@balchemyai/agent-sdk";
-
-const store = new TokenStore({
-  refreshFn: async () =>
-    sdk.onboardWithIdentity({
-      provider: "registered-provider-id",
-      identityToken: "PROVIDER_JWT",
-      agentId: "agent-example",
-      chainId: 8453,
-      scope: "trade",
-    }),
-});
-
-await store.set(response);
-const token = await store.get();
-```
-
-The store refreshes when the token is near expiry.
-
-## Identity Access Token
-
-`OnboardingResponse` includes `identityAccess` when the platform issues a
-short-lived identity access token beside the MCP key.
-
-```ts
-import type { IdentityAccess } from "@balchemyai/agent-sdk";
-
-const access: IdentityAccess | undefined = response.identityAccess;
-const scope = access?.scope;
-const expiresAt = access?.expiresAt;
-```
-
-## SSE Events
-
-```ts
-import { SseEventStream } from "@balchemyai/agent-sdk";
-import type { SseEvent } from "@balchemyai/agent-sdk";
-
-const stream = new SseEventStream(
-  `${response.mcp.endpoint}/events/sse`,
-  response.mcp.apiKey ?? "",
-  { reconnectDelayMs: 2000, maxReconnects: 0 }
-);
-
-async function readEvents() {
-  for await (const event of stream) {
-    handleEvent(event);
-  }
-}
-
-function handleEvent(event: SseEvent) {
-  return event;
-}
-```
-
-## Identity Token Revocation
-
-```ts
-await sdk.revokeIdentityToken({
-  identityToken: response.identityAccess.token,
-  jti: "token-jti",
-  ttlSeconds: 86400,
-});
-
-const { revoked } = await sdk.getIdentityTokenRevokeStatus({
-  identityToken: response.identityAccess.token,
-  jti: "token-jti",
-});
-```
-
-The revoke routes are public at the HTTP guard layer, but they still require an
-`Authorization: Bearer <identity-access-token>` proof matching the token ID.
-
-## Platform Endpoints
-
-| Endpoint | Path | Auth |
-| --- | --- | --- |
-| MCP server | `POST /mcp/{publicId}` | `Authorization: Bearer <mcp-api-key>` |
-| SIWE nonce | `POST /api/nest/auth/evm/nonce` | Public |
-| SIWE onboarding | `POST /api/public/erc8004/onboarding/siwe` | Public |
-| Walletless onboarding | `POST /api/public/erc8004/onboarding/identity` | Public |
-| Token revoke | `POST /api/public/erc8004/onboarding/tokens/revoke` | Bearer identity proof |
-| JWKS | `GET /.well-known/jwks.json` | Public |
-| MCP discovery | `GET /.well-known/mcp.json` | Public |
-| Agent directory | `GET /api/nest/agents/verified/page` | Public |
-
-JWKS is root-relative. Do not prefix it with `/api`.
-
-## Operator Setup
-
-| Variable | Required | Description |
-| --- | --- | --- |
-| `AGENT_WALLETLESS_ONBOARDING_ENABLED` | Walletless path | Enables identity onboarding. Default: `false`. |
-| `SIWE_DOMAIN_ALLOWLIST` | SIWE path | Comma-separated domains allowed in SIWE verification. |
-| `ERC8004_IDENTITY_PROVIDERS` | Walletless path | Registered provider IDs. |
-| `AGENT_IDENTITY_ISSUER_PRIVATE_KEY_PEM` | Identity tokens | ES256 private key for short-lived identity access tokens. |
-| `API_URL` | Always | Base API URL used to build MCP endpoint URLs. |
-
 ## Notes
 
-- `agent_seed_request` is disabled on the platform.
-- `requestSeed()` remains for compatibility and throws `AgentSdkError` with
-  code `execution_error`.
-- MCP keys are scoped. Choose `read` or `trade` during onboarding.
-- Walletless onboarding requires an operator-approved provider.
+- Every request is proven by the runner's own signature over a fixed-purpose
+  message; the SDK never accepts an owner session token.
+- Failures raise `AgentSdkError` and never quote a credential or private URL.
 
 ## Docs
 
 - [Error and retry strategy](docs/error-retry-strategy.md)
-- [Python parity backlog](docs/python-parity-backlog.md)
-- [Partner integration checklist](docs/partner-integration-checklist.md)
 - [Release policy](docs/release-policy.md)
 - [Full API reference](https://balchemy.ai/docs)

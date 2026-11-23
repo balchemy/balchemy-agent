@@ -1,5 +1,13 @@
 const REDACTED = "[REDACTED]";
 const MAX_DEPTH = 8;
+const DEFAULT_MAX_RESPONSE_BYTES = 256 * 1024;
+
+export class ResponseSizeLimitError extends Error {
+  constructor() {
+    super('provider response exceeded the SDK size limit');
+    this.name = 'ResponseSizeLimitError';
+  }
+}
 
 const SENSITIVE_KEY_PATTERN = /(^|[-_.])(?:auth|authorization|cookie|token|secret|key|credential|password|private|seed|mnemonic|signature|session|wallet|address|email|username|api[-_]?key|master[-_]?key|dsn|connection[-_]?string)(?:[-_.]|$)/i;
 
@@ -74,4 +82,50 @@ export function sanitizePublicErrorDetails(value: unknown, depth = 0): unknown {
       : sanitizePublicErrorDetails(nestedValue, depth + 1);
   }
   return output;
+}
+
+export async function readBoundedResponseText(
+  response: Response,
+  maxBytes = DEFAULT_MAX_RESPONSE_BYTES,
+  signal?: AbortSignal,
+): Promise<string> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new Error('maxBytes must be a positive safe integer');
+  }
+  if (!response.body) {
+    const fallback = typeof response.text === 'function' ? await response.text() : '';
+    if (Buffer.byteLength(fallback, 'utf8') > maxBytes) {
+      throw new ResponseSizeLimitError();
+    }
+    return fallback;
+  }
+
+  const reader = response.body.getReader();
+  const abortRead = () => { void reader.cancel().catch(() => undefined); };
+  signal?.addEventListener('abort', abortRead, { once: true });
+  if (signal?.aborted) abortRead();
+  const decoder = new TextDecoder();
+  let bytesRead = 0;
+  let text = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytesRead += value.byteLength;
+      if (bytesRead > maxBytes) {
+        try {
+          await reader.cancel('response size limit exceeded');
+        } catch {
+          // The size violation is authoritative even if transport cancellation fails.
+        }
+        throw new ResponseSizeLimitError();
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    signal?.removeEventListener('abort', abortRead);
+    reader.releaseLock();
+  }
 }

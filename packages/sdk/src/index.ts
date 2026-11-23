@@ -1,171 +1,60 @@
-import { HttpClient } from "./client/http-client";
-import { AgentOnboardingClient } from "./auth/onboarding";
-import { BalchemyMcpClient, connectMcp } from "./mcp/mcp-client";
-import type {
-  AgentAssetReportArgs,
-  AgentMarketBriefArgs,
-  AgentReadinessReportArgs,
-  SafeToolSessionArgs,
-} from "./mcp/mcp-client";
-import type {
-  AgentSdkConfig,
-  IdentityTokenRevokeResponse,
-  IdentityTokenRevokeStatusInput,
-  McpCallToolResponse,
-  OnboardWithIdentityInput,
-  OnboardWithSiweInput,
-  OnboardingResponse,
-  RevokeIdentityTokenInput,
-  RequestSiweNonceInput,
-  SiweNonceResponse,
-} from "./types";
-
-export type {
-  AgentSdkConfig,
-  AgentOnboardingMode,
-  AgentScope,
-  IdentityAccess,
-  OnboardWithIdentityInput,
-  OnboardWithSiweInput,
-  OnboardingResponse,
-  RevokeIdentityTokenInput,
-  IdentityTokenRevokeStatusInput,
-  IdentityTokenRevokeResponse,
-  RequestSiweNonceInput,
-  SiweNonceResponse,
-  McpTool,
-  McpListToolsResponse,
-  McpCallToolResponse,
-  AgentResponse,
-  McpToolExtensions,
-  McpToolWithMetadata,
-} from "./types";
 export type { AgentSdkErrorCode } from "./errors/error-codes";
 export { AgentSdkError } from "./errors/agent-sdk-error";
-export { BalchemyMcpClient, connectMcp, getToolText, parseToolJson, isToolError } from "./mcp/mcp-client";
-export type {
-  AgentAssetReportArgs,
-  AgentMarketBriefArgs,
-  AgentReadinessReportArgs,
-  AskBotArgs,
-  McpBatchToolCallInput,
-  McpBatchToolCallResult,
-  McpHealthResponse,
-  SafeToolSessionArgs,
-} from "./mcp/mcp-client";
-export { SseEventStream } from "./streaming/sse-event-stream";
-export type { SseEvent, SseStreamOptions } from "./streaming/sse-event-stream";
-export type {
-  StoredToken,
-  TokenRefreshFn,
-  TokenStoreOptions,
-} from "./auth/token-store";
-export { TokenStore } from "./auth/token-store";
+export { RunnerPairingClient, pairingBindingDigest, runnerPairingReadMessage, validateRunnerPairingBinding, validateRunnerPairingReadNonce, validateRunnerPairingResponse } from "./local-runner/pairing-client";
+export type { LocalAgentPairingBindingV1, RunnerPairingReadNonce, RunnerPairingChallenge, RunnerPairingReceipt, RunnerPairingReadResource, RunnerPairingReadResponse, RunnerPairingIdentity } from "./local-runner/pairing-client";
 
-// Agent Loop
-export { AgentLoop } from './agent-loop/agent-loop';
-export { LlmCostTracker } from './agent-loop/llm-cost-tracker';
-export { DecisionHandler } from './agent-loop/decision-handler';
-export { WebhookReceiver } from './agent-loop/webhook-receiver';
-export { OpenAiAdapter } from './agent-loop/llm-adapters/openai';
-export { AnthropicAdapter } from './agent-loop/llm-adapters/anthropic';
-export { checkTradeAmount, checkTradeRate, checkAllRules } from './agent-loop/rule-checker';
-export type { RuleCheckResult } from './agent-loop/rule-checker';
+export { RunnerControlClient, runnerControlCommandDigest, runnerControlLocalReceiptId, runnerControlBodyDigest, runnerControlNonceMessage, validateRunnerControlCommand, validateRunnerControlNonce, validateRunnerControlPollResponse, validateRunnerControlAckResponse } from "./local-runner/control-client";
+export type { RunnerControlTarget, RunnerControlState, RunnerControlAction, RunnerControlProofAction, RunnerControlCommand, RunnerControlObservation, RunnerControlPollBody, RunnerControlAckBody, RunnerControlOperation, RunnerControlExpectedTarget, RunnerControlNonce, RunnerControlPollResponse, RunnerControlRecord, RunnerControlAckResponse, RunnerControlSigner, RunnerControlClientConfig } from "./local-runner/control-client";
+export { RunnerRuntimeClient, runnerRuntimeBodyDigest, runnerRuntimeNonceMessage, validateRunnerRuntimeNonce, validateRunnerRuntimeLeaseReceipt, validateRunnerBrainObservation, validateRunnerKeystoreObservation, RUNNER_KEYSTORE_LOCKS, RUNNER_EXIT_CAPABILITIES, isRunnerRuntimeModeState, isRunnerRuntimeEntriesState, parseRunnerRuntimeState, runnerRuntimeStateTuple, RUNNER_RUNTIME_MODES, RUNNER_RUNTIME_ENTRIES } from "./local-runner/runtime-client";
+export type { RunnerRuntimeTarget, RunnerRuntimeState, RunnerRuntimeMode, RunnerRuntimeEntries, RunnerBrainObservation, RunnerKeystoreObservation, RunnerKeystoreLock, RunnerExitCapability, RunnerRuntimeAcquireBody, RunnerRuntimeHeartbeatBody, RunnerRuntimeActionBody, RunnerRuntimeAction, RunnerRuntimeExpectedTarget, RunnerRuntimeNonce, RunnerRuntimeLeaseReceipt, RunnerRuntimeSigner, RunnerRuntimeClientConfig } from "./local-runner/runtime-client";
+export { RunnerResearchClient, runnerResearchRequestDigest, runnerResearchNonceMessage, validateRunnerResearchNonce, validateRunnerResearchResponse } from "./local-runner/research-client";
+export type { RunnerResearchTarget, RunnerResearchChain, RunnerResearchSignal, RunnerResearchRequest, RunnerResearchExpectedTarget, RunnerResearchNonce, RunnerResearchFailureDetails, RunnerResearchFailureStatus, RunnerResearchResult, RunnerResearchResponse, RunnerResearchSigner, RunnerResearchClientConfig } from "./local-runner/research-client";
+export { RunnerAssessmentClient, runnerAssessmentRequestDigest, runnerAssessmentNonceMessage, validateRunnerAssessmentNonce, validateRunnerAssessmentResponse } from "./local-runner/assessment-client";
+export type { RunnerAssessmentTarget, RunnerAssessmentRequest, RunnerAssessmentExpectedTarget, RunnerAssessmentNonce, RunnerAssessmentFee, RunnerAssessmentQuote, RunnerAssessmentPretrade, RunnerSolanaAssessment, RunnerAssessmentResponse, RunnerAssessmentSigner, RunnerAssessmentClientConfig } from "./local-runner/assessment-client";
+export { RunnerTradingWalletClient, runnerTradingWalletRequestDigest, runnerTradingWalletNonceMessage, runnerTradingWalletPossessionMessage, runnerTradingWalletBindingDigest, validateRunnerTradingWalletNonce, validateRunnerTradingWalletBinding, validateRunnerTradingWalletBindResponse } from "./local-runner/trading-wallet-client";
+export type { RunnerTradingWalletTarget, RunnerTradingWalletRequest, RunnerTradingWalletExpectedTarget, RunnerTradingWalletNonce, RunnerTradingWalletBinding, RunnerTradingWalletBindResponse, RunnerTradingWalletSigner, RunnerTradingWalletPossessionSigner, RunnerTradingWalletClientConfig } from "./local-runner/trading-wallet-client";
+export { RunnerExecutionBuildClient, RUNNER_EXECUTION_REFUSALS, RUNNER_EXIT_TRIGGERS, RUNNER_EXIT_MAX_ENTRY_BUILDS, isRunnerDcaRequest, runnerExecutionRequestDigest, runnerExecutionNonceMessage, runnerExecutionBuildDigest, validateRunnerExecutionNonce, validateRunnerExecutionResponse } from "./local-runner/execution-build-client";
+export type { RunnerExecutionTarget, RunnerExecutionRequest, RunnerExecutionRequestV2, RunnerExecutionBuyRequest, RunnerExecutionDcaRequest, RunnerDcaPlan, RunnerDailyCap, RunnerExecutionReservationV2, RunnerExitRequest, RunnerExitTrigger, RunnerExitTriggerObservation, RunnerExecutionIntent, RunnerExecutionExpectedTarget, RunnerExitExpectedTarget, RunnerExecutionIntentTarget, RunnerExecutionNonce, RunnerExecutionExpected, RunnerExecutionBuild, RunnerExecutionReservation, RunnerExitReservation, RunnerExecutionRefused, RunnerExecutionBuilt, RunnerExecutionResponse, RunnerExecutionSigner, RunnerExecutionBuildClientConfig } from "./local-runner/execution-build-client";
+export { runnerPlatformWsolAccount, runnerMinOutAfterPlatformFee } from "./local-runner/solana-platform-account";
+export { RunnerSellAssessmentClient, RUNNER_SELL_MINT_REASONS, runnerSellAssessmentRequestDigest, runnerSellAssessmentNonceMessage, runnerSolanaSellAssessmentDigest, validateRunnerSellAssessmentNonce, validateRunnerSolanaSellAssessment, validateRunnerSellAssessmentResponse } from "./local-runner/sell-assessment-client";
+export type { RunnerSellAssessmentTarget, RunnerSellAssessmentRequest, RunnerSellAssessmentExpectedTarget, RunnerSellAssessmentNonce, RunnerSellMintReason, RunnerSellAssessmentFee, RunnerSellAssessmentAccounts, RunnerSellAssessmentQuote, RunnerSellAssessmentReason, RunnerSolanaSellAssessment, RunnerSellAssessmentResponse, RunnerSellAssessmentSigner, RunnerSellAssessmentClientConfig } from "./local-runner/sell-assessment-client";
+export { RUNNER_OWNER_APPROVAL_PURPOSE, RUNNER_OWNER_APPROVAL_TTL_MS, RUNNER_OWNER_APPROVAL_URI_PATH, RUNNER_OWNER_APPROVAL_CHAIN_IDS, runnerFirstEnableFields, runnerFirstEnableApprovalDigest, runnerFirstEnableCheckCode, runnerFirstEnableLocalCheckCode, runnerFirstEnableApprovalStatement, runnerFirstEnableApprovalMessage } from "./local-runner/owner-approval-message";
+export type { RunnerOwnerApprovalChainId, RunnerSignableCap, RunnerCapBasis, RunnerFirstEnableCaps, RunnerFirstEnableFields, RunnerFirstEnableMessageInput, RunnerFirstEnableDigestInput } from "./local-runner/owner-approval-message";
+export { RunnerOwnerApprovalClient, runnerFirstEnableChallengeCheckCode, runnerFirstEnableRequestDigest, runnerFirstEnableReadRequestDigest, runnerFirstEnableNonceMessage, runnerFirstEnableReadNonceMessage, validateRunnerFirstEnableNonce, validateRunnerFirstEnableReadNonce, validateRunnerFirstEnableChallenge, validateRunnerFirstEnableReadResponse } from "./local-runner/owner-approval-client";
+export { RunnerFirstEnableCeilingClient, RUNNER_CEILING_PER_TRADE_MAX_LAMPORTS, RUNNER_CEILING_DAILY_MAX_LAMPORTS, RUNNER_CEILING_PROPOSAL_TTL_MS, runnerCeilingReadRequestDigest, runnerCeilingReadNonceMessage, validateRunnerCeilingReadNonce, validateRunnerCeilingProposal, validateRunnerCeilingReadResponse } from "./local-runner/first-enable-ceiling-client";
+export type { RunnerCeilingTarget, RunnerCeilingReadRequest, RunnerCeilingReadExpectedTarget, RunnerCeilingReadNonce, RunnerCeilingProposal, RunnerCeilingReadResponse, RunnerCeilingReadSigner, RunnerCeilingClientConfig } from "./local-runner/first-enable-ceiling-client";
+export type { RunnerOwnerApprovalTarget, RunnerFirstEnableRequest, RunnerFirstEnableReadRequest, RunnerFirstEnableExpectedTarget, RunnerFirstEnableReadExpectedTarget, RunnerFirstEnableNonce, RunnerFirstEnableReadNonce, RunnerFirstEnableChallenge, RunnerFirstEnableEvidence, RunnerFirstEnableUnverifiedEvidence, RunnerFirstEnableReadResponse, RunnerFirstEnableSigner, RunnerFirstEnableReadSigner, RunnerOwnerApprovalClientConfig } from "./local-runner/owner-approval-client";
+export { RUNNER_POSITION_HELD_REASONS, RUNNER_POSITION_NOTICES, RUNNER_OWNER_POSITIONS_MAX, validateRunnerOwnerPositionsResponse } from "./local-runner/owner-positions";
+export type { RunnerPositionHeldReason, RunnerPositionNotice, RunnerOwnerPosition, RunnerOwnerPositionsResponse } from "./local-runner/owner-positions";
+export { RunnerExecutionSubmitClient, RUNNER_EXECUTION_SUBMIT_REFUSALS, RUNNER_EXECUTION_STATUS_REFUSALS, RUNNER_LOCAL_SWAP_STATES, RUNNER_LOCAL_SWAP_UNJOURNALED_STATES, RUNNER_LOCAL_SWAP_ORDER_STATUS, RUNNER_LOCAL_SWAP_OBSERVED_STATES, RUNNER_LOCAL_SWAP_REASONS, runnerReservationSettlement, runnerSignedTransactionSignature, runnerExecutionSubmitRequestDigest, runnerExecutionStatusRequestDigest, runnerExecutionSubmitNonceMessage, runnerExecutionStatusNonceMessage, validateRunnerExecutionSubmitNonce, validateRunnerExecutionStatusNonce, validateRunnerExecutionSubmitResponse, validateRunnerExecutionStatusResponse } from "./local-runner/execution-submit-client";
+export type { RunnerExecutionSubmitRequest, RunnerExecutionStatusRequest, RunnerExecutionSubmitExpectedTarget, RunnerExecutionStatusExpectedTarget, RunnerExecutionSubmitNonce, RunnerExecutionStatusNonce, RunnerLocalSwapState, RunnerLocalSwapReason, RunnerLocalSwapOrderStatus, RunnerReservationState, RunnerExecutionSubmission, RunnerExecutionSubmitted, RunnerExecutionStatus, RunnerExecutionSubmitResponse, RunnerExecutionStatusResponse, RunnerExecutionSubmitSigner, RunnerExecutionStatusSigner, RunnerExecutionSubmitClientConfig } from "./local-runner/execution-submit-client";
+
+export { RUNNER_SIGNAL_PLATFORMS } from "./local-runner/signals-client";
+export type { RunnerSignalPlatform, RunnerIgnoredSignal } from "./local-runner/signals-client";
+export { fetchRunnerLaunchpadCatalog, validateRunnerLaunchpadCatalog, canonicalRunnerLaunchpadIds, RunnerLaunchpadSubscriptionsClient,
+  runnerLaunchpadSubscriptionsRequestDigest, runnerLaunchpadSubscriptionsNonceMessage, validateRunnerLaunchpadSubscriptionsNonce,
+  validateRunnerLaunchpadSubscriptionsResponse, RUNNER_LAUNCHPAD_STATUSES, RUNNER_LAUNCHPAD_REFUSALS, RUNNER_LAUNCHPAD_MAX_SUBSCRIPTIONS,
+  RUNNER_LAUNCHPAD_ID } from "./local-runner/launchpad-client";
+export type { RunnerLaunchpadStatus, RunnerLaunchpad, RunnerLaunchpadCatalog, RunnerLaunchpadSubscriptionsRequest, RunnerLaunchpadSubscription,
+  RunnerLaunchpadSubscriptionsResponse, RunnerLaunchpadSubscriptionsTarget, RunnerLaunchpadSubscriptionsExpectedTarget,
+  RunnerLaunchpadSubscriptionsNonce, RunnerLaunchpadSubscriptionsSigner, RunnerLaunchpadSubscriptionsClientConfig,
+  RunnerLaunchpadRefusal } from "./local-runner/launchpad-client";
+export { RunnerSignalsClient, runnerSignalsRequestDigest, runnerSignalEventDigest, runnerSignalsNonceMessage, validateRunnerSignalsNonce, validateRunnerSignalsResponse, validateRunnerSignal } from "./local-runner/signals-client";
+export type { RunnerSignalsTarget, RunnerSignalsRequest, RunnerSignalsExpectedTarget, RunnerSignalsNonce, RunnerSignalProjection, RunnerSignal, RunnerSignalsResult, RunnerSignalsResponse, RunnerSignalsSigner, RunnerSignalsClientConfig } from "./local-runner/signals-client";
+export { RunnerDecisionReportClient, RUNNER_DECISION_ACTIONS, RUNNER_DECISION_HOLD_REASONS, RUNNER_DECISION_REPORT_CONFLICT, RUNNER_DECISION_REPORT_LEASE_CONFLICT, RUNNER_DECISION_REPORT_RECEIPT_SKEW_MS, runnerDecisionReportRequestDigest, runnerDecisionReportNonceMessage, validateRunnerDecisionReport, validateRunnerDecisionReportNonce, validateRunnerDecisionReportReceipt } from "./local-runner/decision-report-client";
+export type { RunnerDecisionReportTarget, RunnerDecisionAction, RunnerDecisionHoldReason, RunnerDecisionReport, RunnerDecisionReportExpectedTarget, RunnerDecisionReportNonce, RunnerDecisionReportReceipt, RunnerDecisionReportSigner, RunnerDecisionReportClientConfig } from "./local-runner/decision-report-client";
+export { RunnerRpcAccessClient, RUNNER_RPC_ACCESS_PROVIDERS, RUNNER_RPC_ACCESS_UNAVAILABLE, runnerRpcAccessRequestDigest, runnerRpcAccessNonceMessage, validateRunnerRpcAccessNonce, validateRunnerRpcAccessGrant } from "./local-runner/rpc-access-client";
+export type { RunnerRpcAccessTarget, RunnerRpcAccessProvider, RunnerRpcBearerAuth, RunnerRpcHeaderAuth, RunnerRpcNoneAuth, RunnerRpcSourceA, RunnerRpcSourceB, RunnerRpcAccessGrant, RunnerRpcAccessExpectedTarget, RunnerRpcAccessNonce, RunnerRpcAccessSigner, RunnerRpcAccessClientConfig } from "./local-runner/rpc-access-client";
+
+// Local LLM adapters
+export { createLocalLlmAdapter } from './local-runner/llm-client';
+export type { LocalLlmAdapterConfig } from './local-runner/llm-client';
+export { isLlmModelId } from './agent-loop/llm-adapters/model-id';
 export type {
-  AgentLoopConfig,
-  AgentStatus,
-  AgentLoopStatus,
-  AgentEvent,
-  AgentDecision,
-  BehaviorRuleLimits,
   LlmAdapter,
+  LlmRequestOptions,
   LlmMessage,
   LlmResponse,
   LlmProvider,
+  LlmTokenPricing,
 } from './agent-loop/types';
-
-export function agentReadinessReport(
-  client: BalchemyMcpClient,
-  args: AgentReadinessReportArgs = {}
-): Promise<McpCallToolResponse> {
-  return client.agentReadinessReport(args);
-}
-
-export function agentContextSnapshot(
-  client: BalchemyMcpClient,
-  args: SafeToolSessionArgs = {}
-): Promise<McpCallToolResponse> {
-  return client.agentContextSnapshot(args);
-}
-
-export function agentMarketBrief(
-  client: BalchemyMcpClient,
-  args: AgentMarketBriefArgs = {}
-): Promise<McpCallToolResponse> {
-  return client.agentMarketBrief(args);
-}
-
-export function agentCandidateReport(
-  client: BalchemyMcpClient,
-  args: AgentAssetReportArgs
-): Promise<McpCallToolResponse> {
-  return client.agentCandidateReport(args);
-}
-
-export function agentRiskReport(
-  client: BalchemyMcpClient,
-  args: AgentAssetReportArgs
-): Promise<McpCallToolResponse> {
-  return client.agentRiskReport(args);
-}
-
-export class BalchemyAgentSdk {
-  private readonly onboarding: AgentOnboardingClient;
-
-  constructor(config: AgentSdkConfig) {
-    const timeoutMs = config.timeoutMs ?? 15_000;
-    const http = new HttpClient({
-      baseUrl: config.apiBaseUrl,
-      timeoutMs,
-      fetchFn: config.fetchFn,
-    });
-    this.onboarding = new AgentOnboardingClient(http);
-  }
-
-  async requestSiweNonce(input: RequestSiweNonceInput): Promise<SiweNonceResponse> {
-    return this.onboarding.requestSiweNonce(input);
-  }
-
-  async onboardWithSiwe(input: OnboardWithSiweInput): Promise<OnboardingResponse> {
-    return this.onboarding.onboardWithSiwe(input);
-  }
-
-  async onboardWithIdentity(
-    input: OnboardWithIdentityInput
-  ): Promise<OnboardingResponse> {
-    return this.onboarding.onboardWithIdentity(input);
-  }
-
-  async revokeIdentityToken(
-    input: RevokeIdentityTokenInput
-  ): Promise<IdentityTokenRevokeResponse> {
-    return this.onboarding.revokeIdentityToken(input);
-  }
-
-  async getIdentityTokenRevokeStatus(
-    input: IdentityTokenRevokeStatusInput
-  ): Promise<IdentityTokenRevokeResponse> {
-    return this.onboarding.getIdentityTokenRevokeStatus(input);
-  }
-
-  connectMcp(params: {
-    endpoint: string;
-    apiKey: string;
-    timeoutMs?: number;
-    fetchFn?: typeof fetch;
-  }): BalchemyMcpClient {
-    return connectMcp(params);
-  }
-}
-
-export { BalchemyAgentSdk as BalchemyClient };

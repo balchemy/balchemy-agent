@@ -59,36 +59,8 @@ function splitCommandAndArgs(positional: string[]): { commandPath: string[]; arg
 
   if (!first) return { commandPath: [], args: [] };
 
-  if (first === "agent" && ["list", "current", "use", "control"].includes(second ?? "")) {
+  if (first === "runner" && ["start", "add", "status", "stop", "arm", "disarm", "shutdown", "recover", "pair", "model", "chat", "result", "model-lock", "model-save", "model-unlock", "model-status", "rules", "intent", "decisions", "decision", "limits", "budget", "sizing", "wallet", "rpc", "trades", "positions", "owner-pin"].includes(second ?? "")) {
     return { commandPath: [first, second as string], args: positional.slice(2) };
-  }
-
-  if (first === "control") {
-    const controlActions = ["status", "pause", "resume", "arm", "disarm", "set-mode", "set_mode"];
-    if (controlActions.includes(second ?? "")) {
-      return { commandPath: [first, second as string], args: positional.slice(2) };
-    }
-    return { commandPath: [first], args: positional.slice(1) };
-  }
-
-  if (first === "auth" && ["status", "login", "logout"].includes(second ?? "")) {
-    return { commandPath: [first, second as string], args: positional.slice(2) };
-  }
-
-  if (first === "context" && ["current", "status"].includes(second ?? "")) {
-    return { commandPath: ["agent", "current"], args: positional.slice(2) };
-  }
-
-  if (first === "tui") {
-    return { commandPath: ["start"], args: positional.slice(1) };
-  }
-
-  if (first === "config" && ["validate", "list"].includes(second ?? "")) {
-    return { commandPath: [first, second as string], args: positional.slice(2) };
-  }
-
-  if (first === "docker" && second === "generate") {
-    return { commandPath: [first], args: positional.slice(2) };
   }
 
   return { commandPath: [first], args: positional.slice(1) };
@@ -111,6 +83,41 @@ export function parseCliArgs(rawArgs: string[]): ParsedCliArgs {
       continue;
     }
 
+    if (arg === "--before" && positional[0] === "runner" && positional[1] === "decisions") {
+      positional.push(arg);
+      continue;
+    }
+
+    if (arg === "--runner" && positional[0] === "doctor" && positional.length === 1) {
+      positional.push(arg);
+      continue;
+    }
+
+    if (arg === "--daily-calls" && positional[0] === "runner" && positional[1] === "limits") {
+      positional.push(arg);
+      continue;
+    }
+
+    if (arg === "--daily-usd" && positional[0] === "runner" && positional[1] === "budget") {
+      positional.push(arg);
+      continue;
+    }
+
+    if (arg === "--launchpads" && positional[0] === "runner" && positional[1] === "signals") {
+      positional.push(arg);
+      continue;
+    }
+
+    if (["--amount-sol", "--slippage-bps"].includes(arg) && positional[0] === "runner" && positional[1] === "sizing") {
+      positional.push(arg);
+      continue;
+    }
+
+    if (["--per-trade", "--daily"].includes(arg) && positional[0] === "runner" && positional[1] === "wallet") {
+      positional.push(arg);
+      continue;
+    }
+
     if (arg.startsWith("--")) {
       unknownFlags.push(arg);
       continue;
@@ -125,8 +132,4 @@ export function parseCliArgs(rawArgs: string[]): ParsedCliArgs {
 
 export function commandKey(commandPath: string[]): string {
   return commandPath.join(" ");
-}
-
-export function isNonInteractive(flags: CliFlags): boolean {
-  return flags.ci || !process.stdin.isTTY || !process.stdout.isTTY;
 }

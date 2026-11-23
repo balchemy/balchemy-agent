@@ -2,38 +2,15 @@
 /**
  * balchemy CLI entry point.
  *
- * Public terminal surface for setup, local agent context, config validation,
- * Docker file generation, and the Ink cockpit.
+ * Public terminal surface: the chat cockpit, the local entry and the local runner.
+ * The external MCP connection model and its commands were removed in 0.9.0.
  */
 
-import * as fs from "node:fs";
-import * as path from "node:path";
 import * as readline from "node:readline";
-import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
-import type { AgentLoopConfig } from "@balchemyai/agent-sdk";
-import {
-  clearAgent,
-  getStorePath,
-  listAgents,
-  loadAgent,
-  setActiveAgent,
-  type StoredAgent,
-} from "./agent-store.js";
 import { C, setNoColor } from "./colors.js";
-import {
-  commandKey,
-  isNonInteractive,
-  parseCliArgs,
-} from "./cli-options.js";
-import {
-  compactValue,
-  createReporter,
-  endpointHost,
-  jsonEnvelope,
-  redactJsonValue,
-  type JsonValue,
-} from "./output.js";
+import { commandKey, parseCliArgs } from "./cli-options.js";
+import { createReporter, jsonEnvelope, type JsonValue } from "./output.js";
 import {
   renderTerminalError,
   terminalErrorToJson,
@@ -42,7 +19,10 @@ import {
 } from "./errors.js";
 
 const require = createRequire(import.meta.url);
-const CLI_VERSION = (require("../package.json") as { version?: string }).version ?? "unknown";
+const CLI_MANIFEST = require("../package.json") as { version?: string; engines?: { node?: string } };
+const CLI_VERSION = CLI_MANIFEST.version ?? "unknown";
+/** Minimum Node major, parsed from package.json "engines.node" (for example ">=20.0.0"). */
+const REQUIRED_NODE_MAJOR = Number.parseInt(/(\d+)/.exec(CLI_MANIFEST.engines?.node ?? "")?.[1] ?? "20", 10);
 const parsed = parseCliArgs(process.argv.slice(2));
 
 if (parsed.flags.noColor) {
@@ -50,8 +30,8 @@ if (parsed.flags.noColor) {
 }
 
 const reporter = createReporter(parsed.flags);
-const cmd = commandKey(parsed.commandPath);
-const args = parsed.args;
+let cmd = commandKey(parsed.commandPath);
+let args = parsed.args;
 
 function ask(rl: readline.Interface, question: string, defaultVal = ""): Promise<string> {
   return new Promise((resolve) => {
@@ -62,39 +42,13 @@ function ask(rl: readline.Interface, question: string, defaultVal = ""): Promise
   });
 }
 
-function normalizeChoice(value: string): string {
-  const trimmed = value.trim().toLowerCase();
-  if (/^([0-9a-z])\1+$/.test(trimmed)) {
-    return trimmed[0] ?? trimmed;
-  }
-  return trimmed;
-}
-
-function printSummaryBlock(title: string, rows: Array<{ label: string; value: string }>): void {
-  const maxLabel = rows.reduce((acc, row) => Math.max(acc, row.label.length), 0);
-  reporter.write(`  ${C.T}${title}${C.R}\n`);
-  for (const row of rows) {
-    reporter.write(`  ${C.D}${row.label.padEnd(maxLabel)}${C.R}  ${row.value}\n`);
-  }
-  reporter.write(`  ${C.D}${"-".repeat(54)}${C.R}\n`);
-}
-
-function mostRecentAgent(agents: StoredAgent[]): StoredAgent | null {
-  if (agents.length === 0) return null;
-  return [...agents].sort((a, b) => {
-    const aTime = Date.parse(a.createdAt);
-    const bTime = Date.parse(b.createdAt);
-    return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
-  })[0] ?? null;
-}
-
 function ensureInteractive(commandName: string): void {
   if (parsed.flags.json) {
     throw new TerminalError({
       code: "TERMINAL_UNSUPPORTED_TUI",
       title: "Interactive terminal required",
       cause: `${commandName} launches an interactive TUI and cannot run with --json.`,
-      fix: "Use a plain CLI command for automation, such as balchemy config validate --json or balchemy agent current --json.",
+      fix: "Use a non-interactive command for automation, such as balchemy runner status --json.",
       commandSuggestion: "balchemy doctor --json",
       exitCode: 2,
     });
@@ -104,87 +58,29 @@ function ensureInteractive(commandName: string): void {
       code: parsed.flags.ci ? "CI_PROMPT_BLOCKED" : "TERMINAL_UNSUPPORTED_TUI",
       title: "Interactive terminal required",
       cause: `${commandName} needs a TTY, but this session is non-interactive.`,
-      fix: "Run the command in a terminal, or use non-interactive validation commands in CI.",
-      commandSuggestion: "balchemy config validate --ci --json",
+      fix: "Run the command in a terminal, or use read-only commands such as balchemy runner status in CI.",
+      commandSuggestion: "balchemy runner status --ci --json",
       exitCode: 2,
     });
   }
 }
 
-async function startSavedAgent(agent: StoredAgent): Promise<void> {
-  ensureInteractive("balchemy start");
-  setActiveAgent(agent.publicId);
-  const { startTui } = await import("./tui/start.js");
-  await startTui({
-    mcpEndpoint: agent.mcpEndpoint,
-    apiKey: agent.apiKey,
-    llmProvider: agent.llmProvider,
-    llmApiKey: agent.llmApiKey,
-    llmModel: agent.llmModel,
-    llmBaseUrl: agent.llmBaseUrl,
-    maxDailyLlmCost: agent.maxDailyLlmCost,
-    llmTimeoutMs: agent.llmTimeoutMs,
-    publicId: agent.publicId,
-    strategy: agent.strategy,
-    shadowMode: agent.shadowMode,
-    behaviorRules: agent.behaviorRules,
-    autoSeedSubscriptions: false,
-  });
-}
-
-async function runWizardFromCwd(): Promise<void> {
-  ensureInteractive("balchemy init");
-  const { startWizard } = await import("./tui/start-wizard.js");
-  await startWizard(process.cwd());
-}
-
-async function chooseSavedAgent(
-  rl: readline.Interface,
-  agents: StoredAgent[],
-): Promise<StoredAgent | null> {
-  const rows = agents.map((agent, index) => ({
-    label: String(index + 1),
-    value: `${compactValue(agent.publicId, 18, 6)}  ${compactValue(agent.mcpEndpoint, 34, 10)}`,
-  }));
-  printSummaryBlock("Saved agents", rows);
-  const answer = normalizeChoice(await ask(rl, `${C.W}Choose agent number or publicId${C.R}`, "1"));
-  const index = Number(answer);
-  if (Number.isInteger(index) && index >= 1 && index <= agents.length) {
-    return agents[index - 1] ?? null;
-  }
-  return agents.find((agent) => agent.publicId.toLowerCase() === answer) ?? null;
-}
-
 function printHelp(): void {
   reporter.write(`
   ${C.G}B${C.T}alchemy ${C.W}Agent CLI${C.R}  ${C.D}v${CLI_VERSION}${C.R}
-  ${C.D}Create, inspect, run, and safely supervise Balchemy agents from the terminal.${C.R}
+  ${C.D}Set up, run and supervise your local Balchemy agents from the terminal.${C.R}
 
   ${C.W}USAGE${C.R}
-    balchemy                         Resume saved agent or run setup wizard
-    balchemy init                    Run setup wizard
-    balchemy start [config]          Start the live Ink cockpit
-    balchemy list                    List saved agents
-    balchemy control status          Show backend autonomous runtime mode
-    balchemy control pause           Pause backend autonomous runtime
-    balchemy control resume          Resume in unarmed mode
-    balchemy control arm             Arm live autonomous execution
-    balchemy control disarm          Return live runtime to unarmed mode
-    balchemy docker [outDir]         Generate Docker files
-
-  ${C.W}COMMANDS${C.R}
-    agent list                       List saved agents (alias: list)
-    agent current                    Show active agent context
-    agent use <publicId>             Switch active saved agent
-    agent control <action>           Alias for control <action>
-    auth status                      Show local auth/context status
-    auth login                       Run interactive setup wizard (alias: init)
-    auth logout                      Clear active context; credential removal stays explicit
-    context current                  Show active agent context (alias: agent current)
-    config validate [config]         Validate config and env references
-    config list [config]             Show non-secret effective config
-    doctor [config]                  Run read-only local CLI checks
-    version                          Show CLI version
+    balchemy                         Cockpit: set up your agent and talk to it (one terminal)
+    balchemy init                    Choose and explicitly start a local agent
+    balchemy runner start <id>       Start the local runner with an agent (shadow mode; it cannot trade)
+    balchemy runner status           Runner, version, Hub connection and trading wallet
+    balchemy runner wallet <id> create  Create the agent's local encrypted trading wallet
+    balchemy runner shutdown         Stop the runner and every agent
+    balchemy runner ...              Every runner command: balchemy runner --help
+    balchemy doctor                  Read-only checks of Node.js and the terminal
+    balchemy doctor --runner         Runner folder, socket, daemon state, versions and Hub connection
+    balchemy version                 Show CLI version
 
   ${C.W}GLOBAL FLAGS${C.R}
     -h, --help                       Show this help
@@ -195,24 +91,107 @@ function printHelp(): void {
         --debug                      Show redacted technical details
         --ci                         Non-interactive mode; fail closed on prompts
         --dry-run                    Preview file/action plans without writing
-    -y, --yes                        Approve safe non-overwrite prompts only
-        --force                      Allow explicit local file overwrites
+    -y, --yes                        Approves nothing; most commands refuse it
+        --force                      Overwrites nothing; most commands refuse it
         --no-color                   Disable ANSI color
 
   ${C.W}SAFETY${C.R}
+    Local entry never starts on blank input.
+    Explicit model, rules, chat and pairing actions remain separate. Execution is unavailable.
+    JSON and non-TTY entry inspect status only; dry-run does not connect or change files.
+    It survives terminal closure while this device stays on; no reboot service is installed.
     --yes never approves live trades, wallet/key mutations, credential deletion, global installs, or file overwrites.
     Use --dry-run before file-writing commands when reviewing changes.
 
-  ${C.W}SHORTCUTS (cockpit)${C.R}
-    Ctrl+S                           Open settings
-    Ctrl+L                           Clear chat
-    Ctrl+N                           Switch agent
-    Ctrl+O                           Export redacted activity transcript
-    Ctrl+Q                           Quit
-    PgUp / PgDn                      Scroll chat history
-    Esc in TRADE CHECK               Cancel; never approve
-    Esc                              Back, close overlay, or cancel
-    ?                                Keyboard help overlay when available
+  ${C.W}COCKPIT COMMANDS (type them in the chat input)${C.R}
+    /agents /new                     Switch agents (Ctrl+N) or add one; the others keep running as they are
+    /pause /stop                     Stop new buys at once (/pause keeps exits running; /stop warns first)
+    /resume /arm                     Resume (typed RESUME) and arm (typed ARM and passphrase)
+    /limit /budget                   Lower at once; higher opens a card with its typed confirmation
+    /directive /model /signals       Strategy (rules card), AI model, launchpad sources
+    /status /positions /wallet       State, positions with realized PnL in SOL, address with QR code
+    /settings /lang /help /exit      Settings (Ctrl+S), reply language, help (?), leave
+    Ctrl+E opens the card · PgUp/PgDn scroll · Ctrl+Q leaves (the runner keeps running)
+
+  ${C.W}REMOVED IN 0.9.0${C.R}
+    legacy, start, tui, list, control, agent, auth, config, context and docker belonged to the
+    external MCP connection model. Run balchemy instead.
+
+`);
+}
+
+async function printRunnerHelp(): Promise<void> {
+  // Every arming and exits sentence follows this build's fixed exits capability.
+  const { PRIVATE_EXECUTION_CAPABILITIES } = await import("./runner/private-execution-gate.js");
+  const exitsAvailable = PRIVATE_EXECUTION_CAPABILITIES.exits === true;
+  reporter.write(`
+  ${C.G}B${C.T}alchemy ${C.W}local runner${C.R}  ${C.D}v${CLI_VERSION}${C.R}
+  ${C.D}A background process on this computer that runs your agents. It stops when this computer restarts or shuts down,
+  and does nothing while it sleeps; an unlocked wallet stays unlocked across sleep (lock it with runner wallet <id> lock).${C.R}
+
+  ${C.W}START AND STOP${C.R}
+    balchemy runner start <id> [...] Start the runner with these agents (shadow mode; it cannot trade)
+    balchemy runner start            Start it again with the agents it already knows (stopped ones stay stopped)
+    balchemy runner add <id>         Add an agent to the running runner (shadow mode); other agents keep running, armed or not
+    balchemy runner status [id]      Runner, version, Hub connection, trading wallet and each agent
+    balchemy runner stop <id>        Stop one agent; the runner keeps running
+    balchemy runner shutdown         Stop the runner and every agent (clears unlocked keys from memory)
+    balchemy runner recover          Only after a crash or power loss: clean up so it can start again
+
+  ${C.W}SET UP AN AGENT${C.R}
+    balchemy runner pair <id> [step] Link the agent to your Hub account (identity only); step is the Challenge ID or confirm
+    balchemy runner owner-pin <id>   Seal your Hub wallet and settings on this computer (whole address shown, its last 6 characters, passphrase)
+    balchemy runner model <id>       Connect your AI model (key kept in memory; masked)
+    balchemy runner model-save <id>  Save the model key encrypted with a passphrase
+    balchemy runner model-unlock <id> Unlock the saved model key after a restart
+    balchemy runner model-lock <id>  Clear the model key from memory; keep the encrypted copy
+    balchemy runner model-status <id> Show the active model and its encrypted storage
+    balchemy runner rules <id> <chain> [action]  Private Solana or Base rules
+      show | edit | review <proposal-id> | history [before-revision]
+      rollback <revision-id> | receipt <operation-id>
+      approval off | approval on  (explicit owner setting: off lets an armed agent buy automatically within its caps)
+    balchemy runner limits <id> [--daily-calls N]  AI model calls per day (not money; spend caps are under runner wallet <id> limits)
+    balchemy runner budget <id> [--daily-usd N]  Daily USD budget for the agent's own AI model cost (default $5; raising asks to confirm)
+    balchemy runner sizing <id> [--amount-sol N --slippage-bps N]  Buy size the agent would use
+    balchemy runner rpc <id> status | set  Your own Solana RPC (URL at a hidden prompt; shown as host only)
+    balchemy runner signals <id> [--launchpads pumpfun,...|none]  Launchpad signal sources (public launches; never a buy by itself)
+
+  ${C.W}TRADING WALLET${C.R}
+    balchemy runner wallet <id> <action>  A local encrypted Solana wallet, separate from your Hub wallet
+      create | import | unlock | lock | status | recover | bind   (unlock again after every runner start)
+      limits [--per-trade SOL|N%|none] [--daily SOL|N%|none]   Optional spend caps (typed confirmation; none = no limit)
+      limits review <proposal>   Review a spend cap proposed in chat (same typed confirmation)
+      acknowledge-copy   Review and acknowledge a trade signed outside Balchemy (lifts the wallet hold)
+    The passphrase cannot be recovered. Only your backed-up secret key restores the wallet.
+
+  ${C.W}LIVE TRADING${C.R}
+${exitsAvailable
+    ? `    balchemy runner arm <id>         Arm live trading (prechecks, typed ARM <id>, passphrase); CLI-only
+      Stop-loss and take-profit exits run only while this computer is on, the runner is running and your wallet is unlocked.`
+    : `    balchemy runner arm <id>         Not available in this version: it has no automatic stop-loss exits.
+      Arm checks this first and refuses before any other setup check, so your setup was not checked; nothing trades.`}
+    balchemy runner disarm <id>      Disarm immediately; no passphrase
+
+  ${C.W}REVIEW${C.R}
+    balchemy runner chat <id>        Attach to private assistant jobs
+    balchemy runner result <id> <job> Read a private job; does not resubmit it
+    balchemy runner decisions <id> [--before N]  Saved signal recommendations
+    balchemy runner decision <id> <job-id>       One saved decision; no execution
+    balchemy runner trades <id>      Local signed-trade journal; changes nothing
+      close <attempt>                Close out a trade held for review after a proof on your own RPC (typed confirmation)
+    balchemy runner positions <id>   Local positions, holds and reasons; changes nothing
+      resolve <position-id>          Resolve a held position from a proven chain readback (typed confirmation)
+      unmanage <reservation-id>      Take a completed buy whose position cannot open off automatic management for good (typed confirmation)
+    balchemy runner intent <id> solana preview   Preview an exact owner-entered buy
+      show <intent-id>                Read a stored preview; never submit it
+
+  ${C.W}AFTER AN UPGRADE${C.R}
+    A running runner keeps its old version. Run balchemy runner shutdown, then balchemy runner start.
+    The restart locks your trading wallet and disarms; unlock it again afterwards.
+
+  ${C.W}TROUBLESHOOTING${C.R}
+    balchemy doctor --runner         Runner folder, socket, daemon state, versions and Hub connection
+    The runner keeps no log file in this version; use runner status, runner trades and doctor --runner.
 
 `);
 }
@@ -231,32 +210,58 @@ function printVersion(): void {
 }
 
 const KNOWN_COMMANDS = [
+  "runner start",
+  "runner add",
+  "runner status",
+  "runner stop",
+  "runner arm",
+  "runner disarm",
+  "runner shutdown",
+  "runner recover",
+  "runner pair",
+  "runner owner-pin",
+  "runner model",
+  "runner chat",
+  "runner result",
+  "runner model-lock",
+  "runner model-save",
+  "runner model-unlock",
+  "runner model-status",
+  "runner rules",
+  "runner intent",
+  "runner decisions",
+  "runner decision",
+  "runner limits",
+  "runner budget",
+  "runner sizing",
+  "runner wallet",
+  "runner rpc",
+  "runner signals",
+  "runner trades",
+  "runner positions",
   "init",
-  "start",
-  "docker",
-  "list",
-  "control",
-  "control status",
-  "control pause",
-  "control resume",
-  "control arm",
-  "control disarm",
-  "control set-mode",
-  "agent list",
-  "agent current",
-  "agent use",
-  "agent control",
-  "auth status",
-  "config validate",
-  "config list",
   "doctor",
   "version",
-  "context current",
-  "context status",
-  "tui",
-  "auth login",
-  "auth logout",
 ];
+
+/**
+ * Commands of the external MCP connection model, removed in 0.9.0. A closed list: the message names only
+ * the matched entry and never echoes other input.
+ */
+const REMOVED_COMMANDS = ["legacy", "start", "tui", "list", "control", "agent", "auth", "config", "context", "docker"] as const;
+
+function removedCommandError(first: string | undefined): TerminalError | null {
+  const removed = REMOVED_COMMANDS.find((name) => name === first);
+  if (!removed) return null;
+  return new TerminalError({
+    code: "UNKNOWN_COMMAND",
+    title: "Command removed",
+    cause: `balchemy ${removed} was removed in 0.9.0 together with the external MCP connection.`,
+    fix: "Run balchemy to open the cockpit. balchemy runner --help lists the runner commands.",
+    commandSuggestion: "balchemy",
+    exitCode: 2,
+  });
+}
 
 function levenshtein(a: string, b: string): number {
   const matrix: number[][] = [];
@@ -288,636 +293,42 @@ function suggestCommand(input: string): string | null {
   return best;
 }
 
-function agentToJson(agent: StoredAgent, activePublicId: string | null): JsonValue {
-  return {
-    publicId: agent.publicId,
-    active: activePublicId === agent.publicId,
-    name: agent.name ?? null,
-    endpointHost: endpointHost(agent.mcpEndpoint),
-    mcpEndpoint: agent.mcpEndpoint,
-    llmProvider: agent.llmProvider,
-    llmModel: agent.llmModel ?? null,
-    mode: agent.shadowMode ? "shadow" : "live",
-    strategy: agent.strategy,
-    createdAt: agent.createdAt,
-    credentials: {
-      apiKey: "[redacted]",
-      llmApiKey: "[redacted]",
-      redacted: true,
-    },
-  };
-}
-
-function agentListData(): JsonValue {
-  const agents = listAgents();
-  const active = loadAgent();
-  return {
-    activePublicId: active?.publicId ?? null,
-    storePath: getStorePath(),
-    agents: agents.map((agent) => agentToJson(agent, active?.publicId ?? null)),
-  };
-}
-
-function printAgentList(commandName: string): void {
-  const agents = listAgents();
-  const active = loadAgent();
-
+async function runnerDoctorCommand(): Promise<void> {
+  if (args.length !== 1) throw new TerminalError({ code: "UNKNOWN_COMMAND", title: "Invalid doctor command", cause: "doctor --runner takes no other arguments.",
+    fix: "Run: balchemy doctor --runner", exitCode: 2 });
+  const { runnerDoctorChecks } = await import("./runner/commands.js");
+  const checks = await runnerDoctorChecks();
+  const hasErrors = checks.some((check) => check.status === "error");
   if (parsed.flags.json) {
-    reporter.json(jsonEnvelope({
-      ok: true,
-      command: commandName,
-      version: CLI_VERSION,
-      data: agentListData(),
-    }));
-    return;
-  }
-
-  if (agents.length === 0) {
-    reporter.write(`  ${C.D}No saved agents. Run ${C.W}balchemy init${C.D} to create one or ${C.W}balchemy auth status${C.D} to inspect context.${C.R}\n`);
-    return;
-  }
-
-  reporter.write(`\n  ${C.T}Saved agents${C.R} ${C.D}(${agents.length})${C.R}\n`);
-  reporter.write(`  ${C.D}${"-".repeat(54)}${C.R}\n`);
-
-  for (const agent of agents) {
-    const isActive = active?.publicId === agent.publicId;
-    const marker = isActive ? `${C.OK}>${C.R}` : " ";
-    const id = compactValue(agent.publicId, 20, 8);
-    const endpoint = compactValue(agent.mcpEndpoint, 30, 10);
-    const model = agent.llmModel ?? "default";
-    const mode = agent.shadowMode ? `${C.G}shadow${C.R}` : `${C.OK}live-approved${C.R}`;
-
-    reporter.write(`  ${marker} ${C.W}${id}${C.R}\n`);
-    reporter.write(`    ${C.D}Endpoint${C.R}  ${endpoint}\n`);
-    reporter.write(`    ${C.D}Host${C.R}      ${endpointHost(agent.mcpEndpoint)}\n`);
-    reporter.write(`    ${C.D}Model${C.R}     ${model}  ${mode}\n`);
-    reporter.write(`    ${C.D}Created${C.R}   ${agent.createdAt}\n`);
-    reporter.write(`  ${C.D}${"-".repeat(54)}${C.R}\n`);
-  }
-  reporter.write(`\n  ${C.D}Next${C.R} ${C.W}balchemy start${C.R} ${C.D}or${C.R} ${C.W}balchemy agent use <publicId>${C.R}\n\n`);
-}
-
-function printAgentCurrent(): void {
-  const active = loadAgent();
-  const data: JsonValue = {
-    active: active ? agentToJson(active, active.publicId) : null,
-    hasActiveAgent: Boolean(active),
-    storePath: getStorePath(),
-  };
-
-  if (parsed.flags.json) {
-    reporter.json(jsonEnvelope({ ok: true, command: "agent.current", version: CLI_VERSION, data }));
-    return;
-  }
-
-  if (!active) {
-    reporter.write(`  ${C.D}No active agent. Run ${C.W}balchemy list${C.D} or ${C.W}balchemy init${C.D}.${C.R}\n`);
-    return;
-  }
-
-  printSummaryBlock("Active agent", [
-    { label: "Agent", value: active.publicId },
-    { label: "Endpoint", value: compactValue(active.mcpEndpoint, 42, 12) },
-    { label: "Host", value: endpointHost(active.mcpEndpoint) },
-    { label: "Provider", value: active.llmProvider },
-    { label: "Model", value: active.llmModel ?? "default" },
-    { label: "Mode", value: active.shadowMode ? "Shadow" : "Live-approved" },
-    { label: "Saved", value: active.createdAt },
-    { label: "Secrets", value: "stored encrypted locally, redacted in CLI output" },
-  ]);
-}
-
-type ControlAction = "status" | "pause" | "resume" | "arm" | "disarm" | "set_mode";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function normalizeControlAction(commandName: string, commandArgs: string[]): { action: ControlAction; mode?: string } {
-  const commandPart = commandName.startsWith("control ") ? commandName.slice("control ".length) : "";
-  const raw = (commandPart || commandArgs[0] || "status").replace("-", "_").toLowerCase();
-  if (raw === "set_mode") {
-    const mode = commandArgs[0] && commandPart ? commandArgs[0] : commandArgs[1];
-    if (!mode) {
-      throw new TerminalError({
-        code: "UNKNOWN_COMMAND",
-        title: "Missing runtime mode",
-        cause: "balchemy control set-mode requires a target mode.",
-        fix: "Use one of: shadow, live_unarmed, live_armed, paused.",
-        commandSuggestion: "balchemy control set-mode shadow",
-        exitCode: 2,
-      });
-    }
-    return { action: "set_mode", mode };
-  }
-  if (raw === "status" || raw === "pause" || raw === "resume" || raw === "arm" || raw === "disarm") {
-    return { action: raw };
-  }
-  throw new TerminalError({
-    code: "UNKNOWN_COMMAND",
-    title: "Unknown control action",
-    cause: `Unsupported control action: ${raw || "(empty)"}.`,
-    fix: "Use status, pause, resume, arm, disarm, or set-mode.",
-    commandSuggestion: "balchemy control status",
-    exitCode: 2,
-  });
-}
-
-async function mcpToolCall(
-  endpoint: string,
-  apiKey: string,
-  name: string,
-  toolArgs: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-  const nonce = `cli-${Date.now()}-${randomUUID().replace(/-/g, "").slice(0, 16)}`;
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-      Authorization: `Bearer ${apiKey}`,
-      "x-request-nonce": nonce,
-      "x-request-timestamp": timestamp,
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: randomUUID(),
-      method: "tools/call",
-      params: {
-        name,
-        arguments: toolArgs,
-      },
-    }),
-    signal: AbortSignal.timeout(15_000),
-  });
-
-  const raw = await response.text();
-  const dataLine = raw.split("\n").find((line) => line.startsWith("data: "));
-  const jsonText = dataLine ? dataLine.slice(6) : raw;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonText);
-  } catch {
-    throw new TerminalError({
-      code: "RUNTIME_ERROR",
-      title: "Invalid MCP response",
-      cause: `MCP returned a non-JSON response with HTTP ${response.status}.`,
-      fix: "Check the endpoint and API key, then retry with --debug if needed.",
-      commandSuggestion: "balchemy auth status",
-      exitCode: 1,
-    });
-  }
-
-  if (!isRecord(parsed)) {
-    throw new TerminalError({
-      code: "RUNTIME_ERROR",
-      title: "Invalid MCP response",
-      cause: "MCP returned an unexpected response envelope.",
-      fix: "Check the endpoint and API key, then retry.",
-      commandSuggestion: "balchemy auth status",
-      exitCode: 1,
-    });
-  }
-
-  if (isRecord(parsed.error)) {
-    const message = typeof parsed.error.message === "string" ? parsed.error.message : "MCP tool call failed.";
-    throw new TerminalError({
-      code: "RUNTIME_ERROR",
-      title: "MCP tool call failed",
-      cause: message,
-      fix: "Confirm your active MCP key has manage scope and a valid step-up token when required.",
-      commandSuggestion: "balchemy auth status",
-      exitCode: 1,
-    });
-  }
-
-  const result = isRecord(parsed.result) ? parsed.result : {};
-  const content = Array.isArray(result.content) ? result.content : [];
-  const firstText = content
-    .map((item) => (isRecord(item) && typeof item.text === "string" ? item.text : null))
-    .find((text): text is string => Boolean(text));
-  if (!firstText) {
-    return result;
-  }
-
-  try {
-    const decoded = JSON.parse(firstText);
-    return isRecord(decoded) ? decoded : { reply: firstText };
-  } catch {
-    return { reply: firstText };
-  }
-}
-
-function getNestedRecord(record: Record<string, unknown>, key: string): Record<string, unknown> | null {
-  const value = record[key];
-  return isRecord(value) ? value : null;
-}
-
-function getRuntimeStateFromControlResult(result: Record<string, unknown>): Record<string, unknown> | null {
-  const structured = getNestedRecord(result, "structured");
-  const stateFromStructured = structured ? getNestedRecord(structured, "state") : null;
-  const runtimeFromStructured = structured
-    ? getNestedRecord(structured, "autonomous_runtime") ?? getNestedRecord(structured, "autonomousRuntime")
-    : null;
-  return stateFromStructured
-    ?? runtimeFromStructured
-    ?? getNestedRecord(result, "state")
-    ?? getNestedRecord(result, "autonomous_runtime")
-    ?? getNestedRecord(result, "autonomousRuntime");
-}
-
-async function controlCommand(commandName: string): Promise<void> {
-  const active = loadAgent();
-  if (!active) {
-    throw new TerminalError({
-      code: "UNKNOWN_COMMAND",
-      title: "No active agent",
-      cause: "Runtime control requires an active saved agent context.",
-      fix: "Run balchemy list, then balchemy agent use <publicId>, or run balchemy init.",
-      commandSuggestion: "balchemy list",
-      exitCode: 2,
-    });
-  }
-
-  const normalized = normalizeControlAction(commandName, args);
-  const toolName = normalized.action === "status" ? "agent_status" : "agent_control";
-  const toolArgs: Record<string, unknown> = normalized.action === "status"
-    ? {}
-    : {
-        action: normalized.action,
-        ...(normalized.mode ? { mode: normalized.mode } : {}),
-        reason: "cli_control",
-      };
-  const result = await mcpToolCall(active.mcpEndpoint, active.apiKey, toolName, toolArgs);
-  const state = getRuntimeStateFromControlResult(result);
-  const data: JsonValue = {
-    agent: {
-      publicId: active.publicId,
-      endpointHost: endpointHost(active.mcpEndpoint),
-      apiKey: "[redacted]",
-    },
-    action: normalized.action,
-    result: redactJsonValue(result),
-    state: state ? redactJsonValue(state) : null,
-  };
-
-  if (parsed.flags.json) {
-    reporter.json(jsonEnvelope({ ok: true, command: commandName, version: CLI_VERSION, data }));
-    return;
-  }
-
-  const mode = typeof state?.mode === "string" ? state.mode : "unknown";
-  const armed = typeof state?.armed === "boolean" ? String(state.armed) : "unknown";
-  const paused = typeof state?.paused === "boolean" ? String(state.paused) : "unknown";
-  printSummaryBlock("Autonomous runtime", [
-    { label: "Agent", value: active.publicId },
-    { label: "Host", value: endpointHost(active.mcpEndpoint) },
-    { label: "Action", value: normalized.action },
-    { label: "Mode", value: mode },
-    { label: "Armed", value: armed },
-    { label: "Paused", value: paused },
-  ]);
-}
-
-function useAgent(publicId: string | undefined): void {
-  if (!publicId) {
-    throw new TerminalError({
-      code: "UNKNOWN_COMMAND",
-      title: "Missing agent publicId",
-      cause: "balchemy agent use requires a saved agent publicId.",
-      fix: "Run balchemy list, then pass the exact publicId to agent use.",
-      commandSuggestion: "balchemy list",
-      exitCode: 2,
-    });
-  }
-
-  if (!setActiveAgent(publicId)) {
-    throw new TerminalError({
-      code: "UNKNOWN_COMMAND",
-      title: "Saved agent not found",
-      cause: `No saved agent matches ${publicId}.`,
-      fix: "Run balchemy list and choose one of the saved publicIds.",
-      commandSuggestion: "balchemy list",
-      exitCode: 2,
-    });
-  }
-
-  const active = loadAgent();
-  if (parsed.flags.json) {
-    reporter.json(jsonEnvelope({
-      ok: true,
-      command: "agent.use",
-      version: CLI_VERSION,
-      data: { active: active ? agentToJson(active, active.publicId) : null },
-    }));
-    return;
-  }
-
-  reporter.write(`  ${C.OK}Active agent:${C.R} ${C.W}${publicId}${C.R}\n`);
-}
-
-function authLogoutCommand(): void {
-  if (parsed.flags.force) {
-    clearAgent();
-    if (parsed.flags.json) {
-      reporter.json(jsonEnvelope({
-        ok: true,
-        command: "auth.logout",
-        version: CLI_VERSION,
-        data: { activeCleared: true, credentialsRemoved: false, storePath: getStorePath() },
-      }));
-      return;
-    }
-    reporter.write(`  ${C.OK}Active agent cleared.${C.R} ${C.D}Saved encrypted credentials were not removed.${C.R}\n`);
-    return;
-  }
-
-  throw new TerminalError({
-    code: "FILE_OVERWRITE_CONFIRMATION_REQUIRED",
-    title: "Logout confirmation required",
-    cause: "auth logout clears local active context and must be explicit.",
-    fix: "Run balchemy auth status to inspect context, then rerun with --force to clear only the active selection.",
-    commandSuggestion: "balchemy auth status",
-    docsHint: "Run balchemy auth logout --help for local credential safety notes.",
-    exitCode: 4,
-  });
-}
-
-function printAuthStatus(): void {
-  const agents = listAgents();
-  const active = loadAgent();
-  const data: JsonValue = {
-    authenticated: Boolean(active),
-    activePublicId: active?.publicId ?? null,
-    endpointHost: active ? endpointHost(active.mcpEndpoint) : null,
-    savedAgentCount: agents.length,
-    encryptedStorePath: getStorePath(),
-    credentialsStored: agents.length > 0,
-    secrets: {
-      apiKeys: agents.length > 0 ? "[redacted]" : null,
-      redacted: true,
-    },
-  };
-
-  if (parsed.flags.json) {
-    reporter.json(jsonEnvelope({ ok: true, command: "auth.status", version: CLI_VERSION, data }));
-    return;
-  }
-
-  printSummaryBlock("Auth status", [
-    { label: "Active", value: active ? active.publicId : "none" },
-    { label: "Host", value: active ? endpointHost(active.mcpEndpoint) : "none" },
-    { label: "Saved", value: String(agents.length) },
-    { label: "Store", value: getStorePath() },
-    { label: "Secrets", value: agents.length > 0 ? "encrypted locally, redacted" : "none" },
-  ]);
-}
-
-async function loadConfigWithEnv(configPath: string): Promise<{ config: AgentLoopConfig; resolvedPath: string; envPath: string | null }> {
-  const resolvedPath = path.resolve(configPath);
-  const dotenv = await import("dotenv");
-  const envPath = path.join(path.dirname(resolvedPath), ".env");
-  if (fs.existsSync(envPath)) {
-    dotenv.config({ path: envPath });
+    reporter.json(jsonEnvelope({ ok: !hasErrors, command: "doctor.runner", version: CLI_VERSION, data: { checks: checks as unknown as JsonValue } }));
   } else {
-    dotenv.config();
-  }
-  const { loadConfig } = await import("./config-loader.js");
-  return {
-    config: loadConfig(resolvedPath),
-    resolvedPath,
-    envPath: fs.existsSync(envPath) ? envPath : null,
-  };
-}
-
-function configToJson(config: AgentLoopConfig, resolvedPath: string, envPath: string | null): JsonValue {
-  return {
-    path: resolvedPath,
-    envPath,
-    mcpEndpoint: config.mcpEndpoint,
-    endpointHost: endpointHost(config.mcpEndpoint),
-    apiKey: "[redacted]",
-    llm: {
-      provider: config.llmProvider,
-      model: config.llmModel ?? null,
-      baseUrl: config.llmBaseUrl ?? null,
-      apiKey: "[redacted]",
-      maxDailyUsd: config.maxDailyLlmCost ?? null,
-      timeoutMs: config.llmTimeoutMs ?? null,
-    },
-    webhook: {
-      port: config.webhookPort ?? null,
-      secret: config.webhookSecret ? "[redacted]" : null,
-    },
-    behaviorRulesConfigured: Boolean(config.behaviorRules || config.behaviorRulesPath),
-    redacted: true,
-  };
-}
-
-async function validateConfigCommand(commandName: string): Promise<void> {
-  const configPath = args[0] ?? path.join(process.cwd(), "agent.config.yaml");
-  const { config, resolvedPath, envPath } = await loadConfigWithEnv(configPath);
-  const data = configToJson(config, resolvedPath, envPath);
-
-  if (parsed.flags.json) {
-    reporter.json(jsonEnvelope({ ok: true, command: commandName, version: CLI_VERSION, data }));
-    return;
-  }
-
-  printSummaryBlock(commandName === "config.list" ? "Effective config" : "Config valid", [
-    { label: "Config", value: resolvedPath },
-    { label: "Env", value: envPath ?? "not found; process env used" },
-    { label: "Endpoint", value: compactValue(config.mcpEndpoint, 42, 12) },
-    { label: "Host", value: endpointHost(config.mcpEndpoint) },
-    { label: "Provider", value: config.llmProvider },
-    { label: "Model", value: config.llmModel ?? "default" },
-    { label: "LLM cap", value: `$${(config.maxDailyLlmCost ?? 5).toFixed(2)} / day` },
-    { label: "Secrets", value: "resolved and redacted" },
-  ]);
-}
-
-function initDryRun(): void {
-  const yamlPath = path.join(process.cwd(), "agent.config.yaml");
-  const envPath = path.join(process.cwd(), ".env");
-  const gitignorePath = path.join(process.cwd(), ".gitignore");
-  const gitignore = fs.existsSync(gitignorePath) ? fs.readFileSync(gitignorePath, "utf8") : "";
-  const plan: JsonValue[] = [
-    {
-      action: fs.existsSync(yamlPath) ? "overwrite" : "create",
-      path: yamlPath,
-      exists: fs.existsSync(yamlPath),
-      wouldOverwrite: fs.existsSync(yamlPath),
-      containsSecret: false,
-    },
-    {
-      action: fs.existsSync(envPath) ? "overwrite" : "create",
-      path: envPath,
-      exists: fs.existsSync(envPath),
-      wouldOverwrite: fs.existsSync(envPath),
-      containsSecret: true,
-    },
-    {
-      action: gitignore.includes(".env") ? "skip" : (fs.existsSync(gitignorePath) ? "append" : "create"),
-      path: gitignorePath,
-      exists: fs.existsSync(gitignorePath),
-      wouldOverwrite: false,
-      containsSecret: false,
-    },
-  ];
-
-  if (parsed.flags.json) {
-    reporter.json(jsonEnvelope({
-      ok: true,
-      command: "init.preview",
-      version: CLI_VERSION,
-      data: { dryRun: true, outDir: process.cwd(), plan },
-    }));
-    return;
-  }
-
-  reporter.write(`\n  ${C.T}Setup file preview${C.R} ${C.D}(dry-run; no files written)${C.R}\n`);
-  for (const item of plan) {
-    const record = item as { action: string; path: string; containsSecret: boolean };
-    reporter.write(`  ${record.action.toUpperCase().padEnd(9)} ${record.path}${record.containsSecret ? "  contains secrets" : ""}\n`);
-  }
-  reporter.write(`\n  ${C.D}Run${C.R} ${C.W}balchemy init${C.R} ${C.D}in an interactive terminal to continue.${C.R}\n\n`);
-}
-
-function dockerPlanToJson(plan: { outDir: string; files: Array<{ filename: string; path: string; action: string; exists: boolean; wouldOverwrite: boolean; containsSecret: boolean }>; hasOverwrites: boolean }, dryRun: boolean): JsonValue {
-  return {
-    outDir: plan.outDir,
-    dryRun,
-    hasOverwrites: plan.hasOverwrites,
-    plan: plan.files.map((file) => ({
-      filename: file.filename,
-      path: file.path,
-      action: file.action,
-      exists: file.exists,
-      wouldOverwrite: file.wouldOverwrite,
-      containsSecret: file.containsSecret,
-    })),
-  };
-}
-
-function renderDockerPlan(plan: { files: Array<{ path: string; action: string; wouldOverwrite: boolean }> }, dryRun: boolean): void {
-  reporter.write(`\n  ${C.T}Docker generation ${dryRun ? "preview" : "plan"}${C.R}${dryRun ? ` ${C.D}(dry-run; no files written)${C.R}` : ""}\n`);
-  for (const file of plan.files) {
-    const label = file.action.toUpperCase().padEnd(9);
-    const suffix = file.wouldOverwrite ? `  ${C.W}requires confirmation${C.R}` : "";
-    reporter.write(`  ${label} ${file.path}${suffix}\n`);
-  }
-}
-
-async function dockerCommand(): Promise<void> {
-  const outDir = path.resolve(args[0] ?? process.cwd());
-  const { buildDockerPlan, generateDocker } = await import("./docker-gen.js");
-  const plan = buildDockerPlan(outDir);
-
-  if (parsed.flags.json) {
-    if (!parsed.flags.dryRun && plan.hasOverwrites && !parsed.flags.force) {
-      throw new TerminalError({
-        code: "FILE_OVERWRITE_CONFIRMATION_REQUIRED",
-        title: "Overwrite confirmation required",
-        cause: "Docker generation would overwrite existing files.",
-        fix: "Run with --dry-run to inspect or pass --force after reviewing the target paths.",
-        commandSuggestion: `balchemy docker ${outDir} --dry-run --json`,
-        exitCode: 4,
-      });
+    reporter.write(`\n  ${C.T}Balchemy runner doctor${C.R} (read-only; nothing was started, stopped or changed)\n`);
+    for (const check of checks) {
+      const label = check.status === "ok" ? `${C.OK}OK${C.R}` : check.status === "warn" ? `${C.G}WARN${C.R}` : `${C.ERR}ERROR${C.R}`;
+      reporter.write(`  ${label.padEnd(18)} ${check.name.padEnd(16)} ${check.detail}\n`);
     }
-    const written = parsed.flags.dryRun ? plan : await generateDocker(outDir, { force: parsed.flags.force });
-    reporter.json(jsonEnvelope({
-      ok: true,
-      command: parsed.flags.dryRun ? "docker.generate.preview" : "docker.generate",
-      version: CLI_VERSION,
-      data: dockerPlanToJson(written, parsed.flags.dryRun),
-    }));
-    return;
+    reporter.write("\n");
   }
-
-  renderDockerPlan(plan, parsed.flags.dryRun);
-  if (parsed.flags.dryRun) {
-    reporter.write(`\n  ${C.D}Run without --dry-run to write files. Use --force only after reviewing overwrites.${C.R}\n\n`);
-    return;
-  }
-
-  if (plan.hasOverwrites && !parsed.flags.force) {
-    if (parsed.flags.ci || isNonInteractive(parsed.flags)) {
-      throw new TerminalError({
-        code: "FILE_OVERWRITE_CONFIRMATION_REQUIRED",
-        title: "Overwrite confirmation required",
-        cause: "Docker generation would overwrite files, and this session cannot prompt.",
-        fix: "Run balchemy docker --dry-run to inspect, then rerun with --force if the overwrites are intended.",
-        commandSuggestion: `balchemy docker ${outDir} --dry-run`,
-        exitCode: 4,
-      });
-    }
-
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY && process.stdout.isTTY });
-    const answer = await ask(rl, `${C.W}Type overwrite to replace existing Docker files${C.R}`);
-    rl.close();
-    if (answer !== "overwrite") {
-      throw new TerminalError({
-        code: "FILE_OVERWRITE_CONFIRMATION_REQUIRED",
-        title: "Docker generation cancelled",
-        cause: "Overwrite confirmation was not provided.",
-        fix: "No files were changed. Rerun with --dry-run to inspect the plan.",
-        commandSuggestion: `balchemy docker ${outDir} --dry-run`,
-        exitCode: 4,
-      });
-    }
-  }
-
-  await generateDocker(outDir, { force: parsed.flags.force || plan.hasOverwrites });
-  reporter.write(`\n  ${C.OK}Docker files written to${C.R} ${outDir}\n`);
-  reporter.write(`\n  ${C.W}Next steps${C.R}\n`);
-  reporter.write(`  1. Copy .env.example to .env and fill in your credentials\n`);
-  reporter.write(`  2. Place agent.config.yaml in the same directory\n`);
-  reporter.write(`  3. Run: docker compose up -d\n\n`);
+  if (hasErrors) process.exitCode = 2;
 }
 
 async function doctorCommand(): Promise<void> {
-  const configPath = args[0] ?? path.join(process.cwd(), "agent.config.yaml");
+  if (args[0] === "--runner") { await runnerDoctorCommand(); return; }
+  if (args.length > 0) throw new TerminalError({ code: "UNKNOWN_COMMAND", title: "Invalid doctor command",
+    cause: "doctor takes no arguments; the agent.config.yaml check was removed in 0.9.0.",
+    fix: "Run: balchemy doctor, or balchemy doctor --runner", exitCode: 2 });
   const checks: Array<{ name: string; status: "ok" | "warn" | "error"; detail: string }> = [];
   const nodeMajor = Number(process.versions.node.split(".")[0]);
   checks.push({
     name: "node-version",
-    status: nodeMajor >= 18 ? "ok" : "error",
-    detail: `Node ${process.versions.node}; required >=18`,
-  });
-  checks.push({
-    name: "agent-store",
-    status: fs.existsSync(getStorePath()) ? "ok" : "warn",
-    detail: fs.existsSync(getStorePath()) ? `Encrypted store found at ${getStorePath()}` : `No encrypted store at ${getStorePath()}`,
+    status: nodeMajor >= REQUIRED_NODE_MAJOR ? "ok" : "error",
+    detail: `Node ${process.versions.node}; required >=${REQUIRED_NODE_MAJOR}`,
   });
   checks.push({
     name: "terminal",
     status: process.stdout.isTTY ? "ok" : "warn",
-    detail: process.stdout.isTTY ? "stdout is interactive" : "stdout is non-interactive; TUI commands will be blocked",
+    detail: process.stdout.isTTY ? "stdout is interactive" : "stdout is non-interactive; the cockpit and prompts will be blocked",
   });
-  checks.push({
-    name: "config-file",
-    status: fs.existsSync(configPath) ? "ok" : "warn",
-    detail: fs.existsSync(configPath) ? `Config found at ${path.resolve(configPath)}` : `Config not found at ${path.resolve(configPath)}`,
-  });
-
-  if (fs.existsSync(configPath)) {
-    try {
-      const loaded = await loadConfigWithEnv(configPath);
-      checks.push({
-        name: "config-validate",
-        status: "ok",
-        detail: `Config resolves for ${endpointHost(loaded.config.mcpEndpoint)}`,
-      });
-    } catch (err: unknown) {
-      checks.push({
-        name: "config-validate",
-        status: "error",
-        detail: toTerminalError(err).cause,
-      });
-    }
-  }
 
   const hasErrors = checks.some((check) => check.status === "error");
   if (parsed.flags.json) {
@@ -925,7 +336,7 @@ async function doctorCommand(): Promise<void> {
       ok: !hasErrors,
       command: "doctor",
       version: CLI_VERSION,
-      data: { checks: checks as unknown as JsonValue, configPath: path.resolve(configPath) },
+      data: { checks: checks as unknown as JsonValue },
     }));
     if (hasErrors) process.exitCode = 2;
     return;
@@ -940,114 +351,13 @@ async function doctorCommand(): Promise<void> {
   if (hasErrors) process.exitCode = 2;
 }
 
-async function startFromConfig(): Promise<void> {
-  ensureInteractive("balchemy start");
-  const configPath = args[0] ?? path.join(process.cwd(), "agent.config.yaml");
-  const { config } = await loadConfigWithEnv(configPath);
-  const publicId = config.mcpEndpoint.split("/").filter(Boolean).pop() ?? "unknown";
-  const { startTui } = await import("./tui/start.js");
-  await startTui({
-    mcpEndpoint: config.mcpEndpoint,
-    apiKey: config.apiKey,
-    llmProvider: config.llmProvider,
-    llmApiKey: config.llmApiKey,
-    llmModel: config.llmModel,
-    llmBaseUrl: config.llmBaseUrl,
-    maxDailyLlmCost: config.maxDailyLlmCost,
-    llmTimeoutMs: config.llmTimeoutMs,
-    publicId,
-    strategy: "custom",
-    shadowMode: config.shadowMode === false ? false : true,
-    behaviorRules: config.behaviorRules,
-    autoSeedSubscriptions: false,
-  });
-}
-
-async function defaultLauncher(): Promise<void> {
-  if (parsed.flags.json) {
-    printAgentCurrent();
-    return;
-  }
-  ensureInteractive("balchemy");
-
-  const agents = listAgents();
-  const active = loadAgent();
-  const last = active ?? mostRecentAgent(agents);
-
-  if (!last) {
-    await runWizardFromCwd();
-    return;
-  }
-
-  const { renderLogo } = await import("./terminal-logo.js");
-  reporter.write(renderLogo(20));
-  reporter.write(`\n  ${C.G}B${C.T}alchemy ${C.W}Agent${C.R}\n`);
-  reporter.write(`  ${C.D}Saved agents ready${C.R}\n\n`);
-  printSummaryBlock(active ? "Last session" : "Most recent session", [
-    { label: "Agent", value: last.publicId },
-    { label: "Endpoint", value: compactValue(last.mcpEndpoint, 42, 12) },
-    { label: "Host", value: endpointHost(last.mcpEndpoint) },
-    { label: "Model", value: last.llmModel ?? "default" },
-    { label: "Strategy", value: compactValue(last.strategy, 42, 8) },
-    { label: "Mode", value: last.shadowMode ? "Shadow" : "Live-approved" },
-    { label: "Saved", value: last.createdAt },
-  ]);
-  const actions = [
-    { label: "y", value: "Resume this agent" },
-    ...(agents.length > 1 ? [{ label: "list", value: "Choose another saved agent" }] : []),
-    { label: "new", value: "Create a new agent or connect existing credentials" },
-  ];
-  printSummaryBlock("Available actions", actions);
-  reporter.write("\n");
-
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: process.stdin.isTTY && process.stdout.isTTY });
-  let nextAction: (() => Promise<void>) | null = null;
-  try {
-    const choice = normalizeChoice(await ask(
-      rl,
-      `${C.W}Action?${C.R} (y${agents.length > 1 ? "/list" : ""}/new)`,
-      "y",
-    ));
-
-    if (choice === "y" || choice === "yes" || choice === "resume" || choice === "last") {
-      nextAction = () => startSavedAgent(last);
-    } else if (
-      Number.isInteger(Number(choice))
-      && Number(choice) >= 1
-      && Number(choice) <= agents.length
-    ) {
-      const selected = agents[Number(choice) - 1]!;
-      nextAction = () => startSavedAgent(selected);
-    } else if (
-      agents.length > 1
-      && (choice === "list" || choice === "choose" || choice === "select" || choice === "agents")
-    ) {
-      const selected = await chooseSavedAgent(rl, agents);
-      if (!selected) {
-        reporter.warn(`  ${C.D}No matching saved agent. Starting setup instead.${C.R}\n\n`);
-        nextAction = () => runWizardFromCwd();
-      } else {
-        nextAction = () => startSavedAgent(selected);
-      }
-    } else if (choice === "new" || choice === "n") {
-      nextAction = () => runWizardFromCwd();
-    } else {
-      reporter.warn(`  ${C.D}Unknown action. Starting setup instead.${C.R}\n\n`);
-      nextAction = () => runWizardFromCwd();
-    }
-  } finally {
-    rl.close();
-  }
-
-  await (nextAction ?? runWizardFromCwd)();
-}
-
 async function main(): Promise<void> {
   if (parsed.unknownFlags.length > 0) {
     throw new TerminalError({
       code: "UNKNOWN_FLAG",
       title: "Unknown flag",
-      cause: `Unsupported flag${parsed.unknownFlags.length > 1 ? "s" : ""}: ${parsed.unknownFlags.join(", ")}`,
+      cause: parsed.commandPath[0] === "runner" ? "Unsupported flag for local runner command."
+        : `Unsupported flag${parsed.unknownFlags.length > 1 ? "s" : ""}: ${parsed.unknownFlags.join(", ")}`,
       fix: "Remove the unsupported flag or run help to see supported global flags.",
       commandSuggestion: "balchemy --help",
       exitCode: 2,
@@ -1055,73 +365,412 @@ async function main(): Promise<void> {
   }
 
   if (parsed.flags.help || cmd === "help") {
-    printHelp();
+    if (parsed.commandPath[0] === "runner" || (cmd === "help" && args[0] === "runner")) await printRunnerHelp();
+    else printHelp();
     return;
   }
   if (parsed.flags.version || cmd === "version") {
     printVersion();
     return;
   }
+  const removed = removedCommandError(parsed.commandPath[0]);
+  if (removed) throw removed;
+
+  // The cockpit: `balchemy` alone in a real terminal. Scripts, --json, --dry-run and `balchemy init` keep the read-only overview
+  // and the explicit launcher below.
+  if (cmd === "" && args.length === 0 && Boolean(process.stdin.isTTY && process.stdout.isTTY) && !parsed.flags.json && !parsed.flags.ci
+    && !parsed.flags.quiet && !parsed.flags.dryRun && !parsed.flags.yes && !parsed.flags.force) {
+    const { runCockpit } = await import("./cockpit/cockpit-flow.js");
+    const { createCockpitDeps } = await import("./cockpit/cockpit-runtime.js");
+    const { runnerDirectory } = await import("./runner/lifecycle.js");
+    await runCockpit(createCockpitDeps(runnerDirectory(), process.env.BALCHEMY_WEB_ORIGIN ?? "https://balchemy.ai"));
+    return;
+  }
+  if (cmd === "" || cmd === "init") {
+    const { runLocalEntry } = await import("./local-entry.js");
+    const result = await runLocalEntry({ args, flags: parsed.flags,
+      interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+      write: (text) => { if (!parsed.flags.quiet) process.stdout.write(text); } });
+    if (result.kind !== "route") {
+      if (parsed.flags.json) reporter.json(jsonEnvelope({ ok: true, command: cmd || "local",
+        version: CLI_VERSION, data: result as unknown as JsonValue }));
+      return;
+    }
+    // The launcher closes its input before the selected handler owns the terminal.
+    cmd = result.command; args = result.args;
+    parsed.commandPath = cmd.split(" "); parsed.args = args;
+  }
 
   switch (cmd) {
-    case "init":
-      if (parsed.flags.dryRun) {
-        initDryRun();
+    case "runner arm": {
+      const { runPrivateArmCommand, formatPrivateArmResult } = await import("./runner/private-arming-ui.js");
+      const { runnerDirectory } = await import("./runner/lifecycle.js");
+      const write = (text: string): Promise<void> => new Promise((resolve, reject) => {
+        process.stdout.write(text, (error) => error ? reject(error) : resolve());
+      });
+      // Real terminal, closed prechecks, typed ARM <agent> and the re-entered passphrase; the server and Hub can never arm.
+      // A2a: an unsealed Hub wallet or settings opens the seal step inline (runner owner-pin), then the checks run again.
+      const { runPrivateOwnerPinSeal, formatPrivateOwnerPinResult } = await import("./runner/private-owner-pin-ui.js");
+      const { readSetupRulesReview } = await import("./cockpit/cockpit-setup.js");
+      const { createWalletPrompt, guardTerminalSignals } = await import("./runner/private-trading-keystore-ui.js");
+      const { readPrivateBrainTarget } = await import("./runner/private-brain-client.js");
+      const directory = runnerDirectory();
+      const sealAuthority = async (known?: string): Promise<boolean> => {
+        const prompt = createWalletPrompt(); const release = guardTerminalSignals(() => prompt.close());
+        try {
+          const result = await runPrivateOwnerPinSeal({ target: readPrivateBrainTarget(directory, args[0]!), write, prompt,
+            describeRules: (agentId, revisionId) => readSetupRulesReview(directory, agentId, revisionId), ...(known !== undefined ? { known } : {}),
+            reason: "Before arming: your Hub wallet or your settings are not sealed on this computer (or a setting is now looser than your seal)." });
+          await write(formatPrivateOwnerPinResult(result));
+          return result.kind === "sealed";
+        } catch { return false; } finally { release(); prompt.close(); }
+      };
+      const result = await runPrivateArmCommand({ args, flags: parsed.flags, directory,
+        interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), write, sealAuthority });
+      await write(formatPrivateArmResult(result));
+      if (result.kind !== "armed" && result.kind !== "dry_run") process.exitCode = 1;
+      return;
+    }
+    case "runner owner-pin": {
+      const { runPrivateOwnerPinCommand, formatPrivateOwnerPinResult } = await import("./runner/private-owner-pin-ui.js");
+      const { readSetupRulesReview } = await import("./cockpit/cockpit-setup.js");
+      const { runnerDirectory } = await import("./runner/lifecycle.js");
+      const write = (text: string): Promise<void> => new Promise((resolve, reject) => {
+        process.stdout.write(text, (error) => error ? reject(error) : resolve());
+      });
+      const directory = runnerDirectory();
+      // Real terminal only: the whole Hub wallet address to compare, its typed last 6 characters, then the hidden wallet passphrase.
+      const result = await runPrivateOwnerPinCommand({ args, flags: parsed.flags, directory, interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), write,
+        describeRules: (agentId, revisionId) => readSetupRulesReview(directory, agentId, revisionId) });
+      await write(formatPrivateOwnerPinResult(result));
+      if (result.kind !== "sealed" && result.kind !== "dry_run") process.exitCode = 1;
+      return;
+    }
+    case "runner wallet": {
+      if (args[1] === "limits") {
+        const { runPrivateSpendLimitsCommand, formatPrivateSpendLimitsResult } = await import("./runner/private-arming-ui.js");
+        const { runnerDirectory } = await import("./runner/lifecycle.js");
+        const write = (text: string): Promise<void> => new Promise((resolve, reject) => {
+          process.stdout.write(text, (error) => error ? reject(error) : resolve());
+        });
+        const result = await runPrivateSpendLimitsCommand({ args, flags: parsed.flags, directory: runnerDirectory(),
+          interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), write });
+        const ok = result.kind !== "outcome_unknown";
+        if (parsed.flags.json) reporter.json(jsonEnvelope({ ok, command: cmd, version: CLI_VERSION, data: result as unknown as JsonValue }));
+        else await write(formatPrivateSpendLimitsResult(result));
+        if (!ok) process.exitCode = 1;
         return;
       }
-      await runWizardFromCwd();
-      return;
-    case "start":
-      await startFromConfig();
-      return;
-    case "docker":
-      await dockerCommand();
-      return;
-    case "list":
-    case "agent list":
-      printAgentList(cmd === "list" ? "agent.list" : "agent.list");
-      return;
-    case "agent current":
-      printAgentCurrent();
-      return;
-    case "control":
-    case "control status":
-    case "control pause":
-    case "control resume":
-    case "control arm":
-    case "control disarm":
-    case "control set-mode":
-    case "control set_mode":
-    case "agent control":
-      await controlCommand(cmd);
-      return;
-    case "auth login":
-      if (parsed.flags.dryRun) {
-        initDryRun();
+      if (args[1] === "acknowledge-copy") {
+        const { runPrivateCopyAcknowledgement, formatPrivateCopyAcknowledgementResult } = await import("./runner/private-submission-ui.js");
+        const { runnerDirectory } = await import("./runner/lifecycle.js");
+        const write = (text: string): Promise<void> => new Promise((resolve, reject) => {
+          process.stdout.write(text, (error) => error ? reject(error) : resolve());
+        });
+        // Real terminal + typed confirmation only; it lifts the hold and changes no trade, ledger entry or key.
+        const result = await runPrivateCopyAcknowledgement({ args, flags: parsed.flags, directory: runnerDirectory(),
+          interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), write });
+        await write(formatPrivateCopyAcknowledgementResult(result));
+        if (result.kind === "outcome_unknown") process.exitCode = 1;
         return;
       }
-      await runWizardFromCwd();
+      const { runPrivateTradingWalletCommand, formatPrivateTradingWalletResult } = await import("./runner/private-trading-keystore-ui.js");
+      const { privateRuleJson } = await import("./runner/private-rule-commands.js");
+      const { runnerDirectory } = await import("./runner/lifecycle.js");
+      // Deliberate owner output: a one-time secret display and exact public addresses,
+      // never generic logging. The secret itself is never part of the result.
+      const write = (text: string): Promise<void> => new Promise((resolve, reject) => {
+        process.stdout.write(text, (error) => error ? reject(error) : resolve());
+      });
+      const result = await runPrivateTradingWalletCommand({ args, flags: parsed.flags, directory: runnerDirectory(),
+        interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), write });
+      const ok = result.kind !== "outcome_unknown";
+      await write(parsed.flags.json ? `${privateRuleJson(jsonEnvelope({ ok, command: cmd, version: CLI_VERSION,
+        data: result as unknown as JsonValue }))}\n` : formatPrivateTradingWalletResult(result));
+      if (!ok) process.exitCode = 1;
       return;
-    case "agent use":
-      useAgent(args[0]);
+    }
+    case "runner rpc": {
+      const { runPrivateSolanaRpcCommand, formatPrivateSolanaRpcResult } = await import("./runner/private-solana-rpc-ui.js");
+      const { runnerDirectory } = await import("./runner/lifecycle.js");
+      const write = (text: string): Promise<void> => new Promise((resolve, reject) => {
+        process.stdout.write(text, (error) => error ? reject(error) : resolve());
+      });
+      // The endpoint URL is read only at the hidden prompt, never from argv; results and errors carry its host alone.
+      const result = await runPrivateSolanaRpcCommand({ args, flags: parsed.flags, directory: runnerDirectory(),
+        interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), write });
+      const ok = result.kind !== "outcome_unknown";
+      if (parsed.flags.json) reporter.json(jsonEnvelope({ ok, command: cmd, version: CLI_VERSION, data: result as unknown as JsonValue }));
+      else await write(formatPrivateSolanaRpcResult(result, args[0]!));
+      if (!ok) process.exitCode = 1;
       return;
-    case "auth status":
-      printAuthStatus();
+    }
+    case "runner trades": {
+      const { runPrivateSubmissionCommand, formatPrivateSubmissionResult, runPrivateTradeClose, formatPrivateTradeCloseResult,
+        CLOSE_TRADE_ACTION } = await import("./runner/private-submission-ui.js");
+      const { runnerDirectory } = await import("./runner/lifecycle.js");
+      if (args[1] === CLOSE_TRADE_ACTION) {
+        const write = (text: string): Promise<void> => new Promise((resolve, reject) => {
+          process.stdout.write(text, (error) => error ? reject(error) : resolve());
+        });
+        // Owner decision 26: real terminal + typed confirmation only; the daemon proves on the owner's own RPC before it closes anything.
+        const result = await runPrivateTradeClose({ args, flags: parsed.flags, directory: runnerDirectory(),
+          interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), write });
+        await write(formatPrivateTradeCloseResult(result));
+        if (result.kind === "outcome_unknown" || result.kind === "refused") process.exitCode = 1;
+        return;
+      }
+      // Public journal facts only; wire bytes, keys and proofs never reach the CLI.
+      const result = await runPrivateSubmissionCommand({ args, flags: parsed.flags, directory: runnerDirectory() });
+      if (parsed.flags.json) reporter.json(jsonEnvelope({ ok: true, command: cmd, version: CLI_VERSION, data: result as unknown as JsonValue }));
+      else reporter.write(formatPrivateSubmissionResult(result));
       return;
-    case "auth logout":
-      authLogoutCommand();
+    }
+    case "runner positions": {
+      const { runPrivatePositionCommand, formatPrivatePositionResult, runPrivatePositionResolve, formatPrivatePositionResolveResult,
+        RESOLVE_POSITION_ACTION, runPrivatePositionUnmanage, formatPrivatePositionUnmanageResult, UNMANAGE_POSITION_ACTION } = await import("./runner/private-position-ui.js");
+      const { runnerDirectory } = await import("./runner/lifecycle.js");
+      if (args[1] === UNMANAGE_POSITION_ACTION) {
+        const write = (text: string): Promise<void> => new Promise((resolve, reject) => {
+          process.stdout.write(text, (error) => error ? reject(error) : resolve());
+        });
+        // Owner item 75: real terminal + typed confirmation; one ledger write after the runner's eligibility checks. Nothing is
+        // signed, sent or sold, and it cannot be undone.
+        const result = await runPrivatePositionUnmanage({ args, flags: parsed.flags, directory: runnerDirectory(),
+          interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), write });
+        await write(formatPrivatePositionUnmanageResult(result));
+        if (result.kind === "outcome_unknown" || result.kind === "unchanged") process.exitCode = 1;
+        return;
+      }
+      if (args[1] === RESOLVE_POSITION_ACTION) {
+        const write = (text: string): Promise<void> => new Promise((resolve, reject) => {
+          process.stdout.write(text, (error) => error ? reject(error) : resolve());
+        });
+        // Real terminal + typed confirmation; one ledger write on a proven chain readback. Nothing is signed, sent or sold.
+        const result = await runPrivatePositionResolve({ args, flags: parsed.flags, directory: runnerDirectory(),
+          interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), write });
+        await write(formatPrivatePositionResolveResult(result));
+        if (result.kind === "outcome_unknown" || result.kind === "unchanged") process.exitCode = 1;
+        return;
+      }
+      // Public ledger facts only; keys, wire bytes, proofs and RPC URLs never reach the CLI.
+      const result = await runPrivatePositionCommand({ args, flags: parsed.flags, directory: runnerDirectory() });
+      if (parsed.flags.json) reporter.json(jsonEnvelope({ ok: true, command: cmd, version: CLI_VERSION, data: result as unknown as JsonValue }));
+      else reporter.write(formatPrivatePositionResult(result));
       return;
-    case "config validate":
-      await validateConfigCommand("config.validate");
+    }
+    case "runner signals": {
+      const { runPrivateLaunchpadCommand, formatPrivateLaunchpadResult } = await import("./runner/private-launchpad-ui.js");
+      const { runnerDirectory } = await import("./runner/lifecycle.js");
+      const { terminalSocketProofSecret } = await import("./runner/private-socket-proof-client.js");
+      // A2a: adding a source may ask the trading wallet passphrase (raw-mode hidden prompt, only in a real terminal).
+      const result = await runPrivateLaunchpadCommand({ args, flags: parsed.flags, directory: runnerDirectory(),
+        proofSecret: terminalSocketProofSecret(Boolean(process.stdin.isTTY && process.stdout.isTTY) && !parsed.flags.json && !parsed.flags.ci) });
+      if (parsed.flags.json) reporter.json(jsonEnvelope({ ok: true, command: cmd, version: CLI_VERSION, data: result as unknown as JsonValue }));
+      else reporter.write(formatPrivateLaunchpadResult(result, args[0]!));
       return;
-    case "config list":
-      await validateConfigCommand("config.list");
+    }
+    case "runner sizing": {
+      const { runPrivateSizingCommand, formatPrivateSizingResult } = await import("./runner/private-sizing-ui.js");
+      const { runnerDirectory } = await import("./runner/lifecycle.js");
+      const write = (text: string): Promise<void> => new Promise((resolve, reject) => {
+        process.stdout.write(text, (error) => error ? reject(error) : resolve());
+      });
+      const result = await runPrivateSizingCommand({ args, flags: parsed.flags, directory: runnerDirectory(),
+        interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), write });
+      const ok = result.kind !== "outcome_unknown";
+      if (parsed.flags.json) reporter.json(jsonEnvelope({ ok, command: cmd, version: CLI_VERSION, data: result as unknown as JsonValue }));
+      else await write(formatPrivateSizingResult(result, args[0]!));
+      if (!ok) process.exitCode = 1;
       return;
+    }
+    case "runner limits": {
+      const { runPrivateAutonomyCommand, formatPrivateAutonomyResult } = await import("./runner/private-autonomy-ui.js");
+      const { runnerDirectory } = await import("./runner/lifecycle.js");
+      const { terminalSocketProofSecret } = await import("./runner/private-socket-proof-client.js");
+      // A2a: a higher daily call limit may ask the trading wallet passphrase (raw-mode hidden prompt, only in a real terminal).
+      const result = await runPrivateAutonomyCommand({ args, flags: parsed.flags, directory: runnerDirectory(),
+        proofSecret: terminalSocketProofSecret(Boolean(process.stdin.isTTY && process.stdout.isTTY) && !parsed.flags.json && !parsed.flags.ci) });
+      const ok = result.kind !== "outcome_unknown";
+      if (parsed.flags.json) reporter.json(jsonEnvelope({ ok, command: cmd, version: CLI_VERSION, data: result as unknown as JsonValue }));
+      else reporter.write(formatPrivateAutonomyResult(result, args[0]!));
+      if (!ok) process.exitCode = 1;
+      return;
+    }
+    case "runner budget": {
+      const { runPrivateModelBudgetCommand, formatPrivateModelBudgetResult } = await import("./runner/private-model-budget-ui.js");
+      const { runnerDirectory } = await import("./runner/lifecycle.js");
+      const write = (text: string): Promise<void> => new Promise((resolve, reject) => {
+        process.stdout.write(text, (error) => error ? reject(error) : resolve());
+      });
+      const result = await runPrivateModelBudgetCommand({ args, flags: parsed.flags, directory: runnerDirectory(),
+        interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), write });
+      const ok = result.kind !== "outcome_unknown" && result.kind !== "cancelled";
+      if (parsed.flags.json) reporter.json(jsonEnvelope({ ok, command: cmd, version: CLI_VERSION, data: result as unknown as JsonValue }));
+      else await write(formatPrivateModelBudgetResult(result, args[0]!));
+      if (!ok) process.exitCode = 1;
+      return;
+    }
+    case "runner decisions":
+    case "runner decision": {
+      const { runPrivateSignalCommand, formatPrivateSignalResult } = await import("./runner/private-signal-ui.js");
+      const { privateRuleJson } = await import("./runner/private-rule-commands.js");
+      const { runnerDirectory } = await import("./runner/lifecycle.js");
+      const result = await runPrivateSignalCommand({ action: cmd === "runner decisions" ? "list" : "read",
+        args, flags: parsed.flags, directory: runnerDirectory() });
+      const output = parsed.flags.json ? `${privateRuleJson(jsonEnvelope({ ok: true, command: cmd,
+        version: CLI_VERSION, data: result as unknown as JsonValue }))}\n` : formatPrivateSignalResult(result, args[0]!);
+      await new Promise<void>((resolve, reject) => process.stdout.write(output, (error) => error ? reject(error) : resolve()));
+      return;
+    }
+    case "runner intent": {
+      const { runPrivateIntentCommand, formatPrivateIntentResult } = await import("./runner/private-intent-commands.js");
+      const { privateRuleJson } = await import("./runner/private-rule-commands.js");
+      const { runnerDirectory } = await import("./runner/lifecycle.js");
+      const write = (text: string): Promise<void> => new Promise((resolve, reject) => {
+        process.stdout.write(text, (error) => error ? reject(error) : resolve());
+      });
+      const result = await runPrivateIntentCommand({ args, flags: parsed.flags, directory: runnerDirectory(),
+        interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), write });
+      const ok = result.kind !== "outcome_unknown" && result.kind !== "not_found";
+      await write(parsed.flags.json ? `${privateRuleJson(jsonEnvelope({ ok, command: cmd, version: CLI_VERSION,
+        data: result as unknown as JsonValue }))}\n` : formatPrivateIntentResult(result));
+      if (!ok) process.exitCode = 1;
+      return;
+    }
+    case "runner rules": {
+      const { runPrivateRuleCommand, formatRuleCommandResult, privateRuleJson } = await import("./runner/private-rule-commands.js");
+      const { runnerDirectory } = await import("./runner/lifecycle.js");
+      // Explicit local rule review must preserve exact source and identifiers.
+      // The general log redactor changes addresses; these validated documents
+      // use deliberate owner output, never generic logging or telemetry.
+      const write = (text: string): Promise<void> => new Promise((resolve, reject) => {
+        process.stdout.write(text, (error) => error ? reject(error) : resolve());
+      });
+      const result = await runPrivateRuleCommand({ args, flags: parsed.flags, directory: runnerDirectory(),
+        interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY), write });
+      await write(parsed.flags.json ? `${privateRuleJson(jsonEnvelope({ ok: result.kind !== "outcome_unknown" && result.kind !== "review_blocked", command: cmd,
+        version: CLI_VERSION, data: result as unknown as JsonValue }))}\n` : formatRuleCommandResult(result));
+      if (result.kind === "outcome_unknown") process.exitCode = 1;
+      else if (result.kind === "review_blocked") process.exitCode = 2;
+      return;
+    }
+    case "runner model":
+    case "runner chat":
+    case "runner model-lock":
+    case "runner model-save":
+    case "runner model-unlock":
+    case "runner model-status":
+    case "runner result": {
+      const action = parsed.commandPath[1] as "model" | "chat" | "model-lock" | "model-save" | "model-unlock" | "model-status" | "result";
+      if (args.length !== (action === "result" ? 2 : 1) || args.some((value) => !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(value)) || parsed.flags.force) {
+        throw new TerminalError({ code: "RUNTIME_ERROR", title: "Invalid private assistant command",
+          cause: "Use one explicit local agent ID and, for result, one job ID. Keys, message text, extra arguments and --force are not accepted.",
+          fix: "Run balchemy --help for usage. Configure keys only in the masked interactive prompt.", exitCode: 2 });
+      }
+      if (parsed.flags.dryRun) {
+        const data = { action, agentId: args[0]!, ...(action === "result" ? { jobId: args[1]! } : {}), preview: true };
+        if (parsed.flags.json) reporter.json(jsonEnvelope({ ok: true, command: cmd, version: CLI_VERSION, data }));
+        else reporter.write(`Private assistant ${action} preview for ${args[0]}. No connection, prompt or change made.\n`);
+        return;
+      }
+      if (action !== "result" && action !== "model-status") ensureInteractive(`balchemy runner ${action}`);
+      const { runnerDirectory } = await import("./runner/lifecycle.js");
+      const { readPrivateBrainTarget } = await import("./runner/private-brain-client.js");
+      const { privateBrainErrorMessage, privateResultLines, readPrivateResult, readPrivateModelStatus, privateModelSummary, privateVaultSummary } = await import("./runner/private-brain-ui.js");
+      let target;
+      try { target = readPrivateBrainTarget(runnerDirectory(), args[0]!); }
+      catch {
+        const { knownRunnerAgents, runnerNotRunningError } = await import("./runner/not-running.js");
+        throw runnerNotRunningError(args[0], knownRunnerAgents(runnerDirectory()), "Local assistant unavailable");
+      }
+      if (action === "model-status") {
+        let response;
+        try { response = await readPrivateModelStatus(target); }
+        catch { throw new TerminalError({ code: "RUNTIME_ERROR", title: "Local model status unavailable", cause: "This read did not confirm the current model or encrypted storage.",
+          fix: "Inspect runner status. No credentials were changed.", exitCode: 1 }); }
+        if (!response.ok) throw new TerminalError({ code: "RUNTIME_ERROR", title: "Local model status unavailable", cause: privateBrainErrorMessage(response.error),
+          fix: "Inspect runner status. No credentials were changed.", exitCode: 1 });
+        if (!response.model) throw new TerminalError({ code: "RUNTIME_ERROR", title: "Invalid model status", cause: "The reply did not contain model state.", fix: "Inspect runner status.", exitCode: 1 });
+        if (parsed.flags.json) reporter.json(jsonEnvelope({ ok: true, command: cmd, version: CLI_VERSION,
+          data: { agentId: target.agentId, model: response.model, vault: response.vault } }));
+        else reporter.write(`${privateModelSummary(response.model)}\n${privateVaultSummary(response.vault)}\n`);
+      } else if (action === "result") {
+        let response;
+        try { response = await readPrivateResult(target, args[1]!); }
+        catch { throw new TerminalError({ code: "RUNTIME_OUTCOME_UNKNOWN", title: "Local result unavailable",
+          cause: "This read did not confirm the job outcome. No job was created or cancelled.", fix: "Keep the same agent and job IDs; inspect runner status before reading again.", exitCode: 1 }); }
+        if (!response.ok) throw new TerminalError({ code: "RUNTIME_ERROR", title: "Local result not confirmed", cause: privateBrainErrorMessage(response.error),
+          fix: "Keep the job ID and inspect the current local runner.", exitCode: 1 });
+        if (!response.job) throw new TerminalError({ code: "RUNTIME_ERROR", title: "Invalid local result", cause: "The reply did not contain the requested job.", fix: "Keep the job ID.", exitCode: 1 });
+        if (parsed.flags.json) reporter.json(jsonEnvelope({ ok: true, command: cmd, version: CLI_VERSION, data: { agentId: target.agentId, job: response.job as unknown as JsonValue } }));
+        else reporter.write(`${privateResultLines(response.job).join("\n")}\n`);
+      } else {
+        const { startLocalRunnerChat } = await import("./tui/LocalRunnerChat.js");
+        await startLocalRunnerChat(target, action);
+      }
+      return;
+    }
+    case "runner pair": {
+      const { runPairingCommand, isPairingConfirmation, pairingApprovalDetails } = await import("./runner/pairing-workflow.js");
+      const { runnerDirectory } = await import("./runner/lifecycle.js");
+      if (!parsed.flags.dryRun && args[1] && args[1] !== "confirm") ensureInteractive("balchemy runner pair approval");
+      const data = await runPairingCommand({
+        directory: runnerDirectory(), frontendOrigin: process.env.BALCHEMY_WEB_ORIGIN ?? "https://balchemy.ai",
+        args, dryRun: parsed.flags.dryRun,
+        approve: async (preview) => {
+          ensureInteractive("balchemy runner pair approval");
+          // Only validated public binding fields enter this approval screen.
+          // The generic log redactor hides EVM addresses; an exact wallet must
+          // instead remain visible in this deliberate ownership decision.
+          const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+          try {
+            const details = pairingApprovalDetails(preview);
+            return isPairingConfirmation(await ask(rl, details), preview.challengeId);
+          } finally { rl.close(); }
+        },
+      });
+      if (parsed.flags.json) reporter.json(jsonEnvelope({ ok: true, command: cmd, version: CLI_VERSION, data: data as unknown as JsonValue }));
+      else {
+        if (data.state === "awaiting_browser") {
+          reporter.write(`Open this pairing link in your browser:\n${data.url}\nRunner fingerprint: ${data.runnerFingerprint.match(/.{1,8}/g)?.join(" ")}\n`);
+          reporter.write(`In the browser, choose your verified wallet. Hub then shows a Challenge ID.\nRun: balchemy runner pair ${args[0]} <paste the Challenge ID>\n`);
+        } else if (data.state === "awaiting_wallet") {
+          reporter.write(`Paste this single-purpose proof into the pairing page:\n${JSON.stringify(data.proof)}\n`);
+          reporter.write(`After browser confirmation, run: balchemy runner pair ${args[0]} confirm\n`);
+        } else if (data.state === "paired") reporter.write([`Paired. ${args[0]} is linked to your Hub account (agent ${data.agentId}; identity only, no trading).`,
+          `Next: connect your AI model with balchemy runner model ${args[0]}, then create a trading wallet with balchemy runner wallet ${args[0]} create.`,
+          "Once that wallet is unlocked, the runner links it to your Hub account by itself (nothing to type).", ""].join("\n"));
+        else if (data.state === "cancelled") reporter.write("Pairing cancelled before local approval.\n");
+        else reporter.write(`Pairing ${data.action} preview; no files or requests created.\n`);
+      }
+      return;
+    }
+    case "runner":
+    case "runner start":
+    case "runner add":
+    case "runner status":
+    case "runner stop":
+    case "runner disarm":
+    case "runner recover":
+    case "runner shutdown": {
+      if (parsed.flags.force) throw new TerminalError({ code: "RUNTIME_ERROR", title: "Force is not supported for local runners",
+        cause: "Local runner ownership must be proven before recovery.", fix: "Remove --force. Keep local coordination and state files intact.", exitCode: 2 });
+      if (parsed.flags.yes && parsed.commandPath[1] !== undefined) throw new TerminalError({ code: "UNKNOWN_FLAG", title: "Unsupported flag",
+        cause: parsed.commandPath[1] === "shutdown"
+          ? "--yes is not supported by balchemy runner shutdown: while an agent is armed or holds open positions, a shutdown needs the typed SHUTDOWN in a terminal."
+          : `--yes is not supported by balchemy runner ${parsed.commandPath[1]}; nothing here needs an approval prompt.`,
+        fix: "Remove --yes and run the command again.", commandSuggestion: "balchemy runner --help", exitCode: 2 });
+      const { runRunnerCommand, formatRunnerStatus, confirmRunnerShutdown } = await import("./runner/commands.js");
+      // Phase 1: a shutdown that leaves positions without stop-loss asks for the typed SHUTDOWN, only in a real terminal.
+      const data = await runRunnerCommand(parsed.commandPath[1] ?? "", args, parsed.flags.dryRun, {
+        interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY) && !parsed.flags.json && !parsed.flags.ci, confirm: confirmRunnerShutdown });
+      if (parsed.flags.json) reporter.json(jsonEnvelope({ ok: true, command: cmd, version: CLI_VERSION, data }));
+      else reporter.write(await formatRunnerStatus(parsed.commandPath[1] ?? "", data, { dryRun: parsed.flags.dryRun }));
+      return;
+    }
     case "doctor":
       await doctorCommand();
-      return;
-    case "":
-      await defaultLauncher();
       return;
     default: {
       const suggestion = suggestCommand(cmd || (parsed.commandPath[0] ?? ""));

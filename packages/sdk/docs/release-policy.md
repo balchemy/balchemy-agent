@@ -14,7 +14,7 @@
 ## Publish Gates
 
 1. Typecheck passes.
-2. Onboarding smoke examples updated.
+2. Runner client examples and README updated.
 3. Changelog entry added.
 4. Backward compatibility review complete for public exports.
 5. Package build output resolves every exported path and CLI bin.

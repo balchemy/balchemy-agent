@@ -7,6 +7,140 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.9.0] — 2026-11-XX
+
+### Removed (breaking)
+
+- The external MCP client: `BalchemyMcpClient`, `connectMcp`, `getToolText`, `parseToolJson`, `isToolError`, the `agent*Report` helpers and every `Mcp*` type. External MCP is retired; the CLI runner plus Hub is the only product path.
+- ERC-8004 onboarding and identity tokens: `BalchemyAgentSdk` / `BalchemyClient`, `TokenStore`, and the SIWE and walletless onboarding types (`OnboardWith*`, `RevokeIdentityToken*`, `SiweNonceResponse`, `AgentSdkConfig`, `AgentScope`, `IdentityAccess`).
+- `SseEventStream` and the external `AgentLoop` with its types (`AgentLoopConfig`, `AgentEvent`, `AgentDecision`, `AgentStatus`, `AgentLoopStatus`) and internals (decision handler, webhook receiver, model router, LLM cost tracker, rule checker, telemetry reporter).
+- The MCP and onboarding examples, and the QUICKSTART, DEPLOYMENT, BEHAVIOR_RULES, partner-checklist and Python-parity docs that described them.
+
+### Kept
+
+- `AgentSdkError` and `AgentSdkErrorCode`, every `Runner*` client and validator, `createLocalLlmAdapter`, `isLlmModelId` and the `Llm*` types.
+
+Older package versions are not deprecated. The CLI no longer reads `~/.balchemy/agents.enc`; the file is left untouched.
+
+## [0.8.1] — 2026-11-22
+
+### Added
+
+- `LlmRequestOptions.jsonObject` (optional, opt-in): asks for one JSON object as the reply. The OpenAI adapter then sends `response_format: { type: "json_object" }`, but only to the official OpenAI endpoint (`https://api.openai.com/v1`). Other OpenAI-protocol endpoints (OpenRouter, self-hosted) and the Anthropic adapter ignore it, so a provider that rejects the field never receives it. It is a hint, not a guarantee: callers still validate the text, and the messages must mention JSON (OpenAI refuses JSON mode otherwise). Without the option the request body is unchanged.
+
+## [0.8.0] — 2026-11-22
+
+### Added
+
+- Launchpad signal sources (K4): `fetchRunnerLaunchpadCatalog` / `validateRunnerLaunchpadCatalog` (public GET `/api/nest/local-agents/launchpads`, closed version 1), and `RunnerLaunchpadSubscriptionsClient` (runner-signed `get` / `set` over POST `/api/nest/local-agents/launchpad-subscriptions/{nonce,query}`, ids strictly ascending, at most 32; a refused id raises an `AgentSdkError` whose machineCode is `LAUNCHPAD_UNKNOWN` or `LAUNCHPAD_NOT_LIVE` (the lower-case ids stay in `details.reason`)). Also `canonicalRunnerLaunchpadIds`, `runnerLaunchpadSubscriptionsRequestDigest` and the nonce helpers.
+- Signal platform `launchpad` (`RUNNER_SIGNAL_PLATFORMS`). A poll row of a platform this SDK does not know, with a valid digest and scope, no longer invalidates the whole page: it is returned in `result.ignored` (event id and digest only) so the runner can ACK it without acting.
+
+- `RunnerRpcAccessClient` (POST `/api/nest/local-agents/rpc-access/{nonce,grant}`): the runner-signed grant of the two
+  Balchemy-provided Solana RPC sources, with the same runner proof as the other runner routes. `validateRunnerRpcAccessGrant` is a
+  strict parser of grant version 1 (exact keys, https URLs kept exactly as sent, the closed provider set `RUNNER_RPC_ACCESS_PROVIDERS`,
+  two different providers, `bearer` only on source a, `header` only on source b, `none` on either). A 503 `rpc_access_unavailable`
+  surfaces as machineCode `RPC_ACCESS_UNAVAILABLE` (exported as the constant `RUNNER_RPC_ACCESS_UNAVAILABLE`). Errors never quote a URL or credential.
+- DCA add request (K1b): `RunnerExecutionDcaRequest` (a position-anchored buy variant, purpose `balchemy.local-agent.execution.dca-request.v1`; it carries `dca: RunnerDcaPlan` in place of the signal provenance and a required `dailyCap`), `RunnerDcaPlan` (`parentEntryBuildDigest`, `ruleRevisionId`, `rulesDigest`, `dcaPlanDigest`) and the type guard `isRunnerDcaRequest`. `RunnerExecutionBuyRequest` now also includes the DCA add, so narrow it with `isRunnerDcaRequest` before reading the signal fields. `RunnerExecutionBuildClient` parses and digests the DCA add. `RUNNER_EXECUTION_REFUSALS` gains `dca_parent_mismatch`, `dca_position_empty`, `dca_position_pending`, `dca_record_headroom`, `dca_spacing` and `dca_daily_cap_required`.
+- `RunnerFirstEnableCeilingClient` (runner-signed read of the owner's spend-ceiling proposal, `nest/local-agents/first-enable-ceiling/runner/{nonce,read}`), with `runnerCeilingReadRequestDigest`, `runnerCeilingReadNonceMessage`, `validateRunnerCeilingReadNonce`, `validateRunnerCeilingProposal`, `validateRunnerCeilingReadResponse` and the bounds `RUNNER_CEILING_PER_TRADE_MAX_LAMPORTS` (10 SOL), `RUNNER_CEILING_DAILY_MAX_LAMPORTS` (100 SOL) and `RUNNER_CEILING_PROPOSAL_TTL_MS` (30 minutes). A proposal grants nothing: the read names the runner's active trading-wallet binding, and the owner's approval still goes through `RunnerOwnerApprovalClient`.
+- `LlmResponse.costUsd` (optional): the charge the provider itself reported, read by the OpenAI-protocol adapter from
+  OpenRouter's `usage.cost`. It is absent when no valid cost is reported and for BYOK calls (`usage.is_byok`).
+
+## [0.7.0] — 2026-11-17
+
+### Added
+
+- One-step pairing on `RunnerPairingClient`: `requestIntentNonce` and `readIntent` find the pending challenge for
+  the runner's own intent (`runnerPublicKey`, `localIntentNonce`) without a Challenge ID, through a single-use
+  runner-signed read with its own purpose (`balchemy.local-agent.runner-intent-read.v1`) and audience.
+  `submitResponse` relays the runner's pairing signature to the owner's Hub page. The static `intentReadMessage`
+  returns the exact signing bytes. A receipt is accepted only for the locally approved binding digest. The types are
+  not exported from the package root yet.
+
+### Changed
+
+- Local LLM model IDs may be `/`-segmented (OpenRouter's `vendor/model`, for example
+  `google/gemini-2.5-flash`). Every ID accepted before is still accepted; empty segments and a
+  leading or trailing `/` are refused. `isLlmModelId` is exported. The ID is only sent in a JSON
+  request body.
+
+---
+
+## [0.6.0] — 2026-11-16
+
+### Added
+
+- Owner first-enable approval protocol for the runner: `RunnerOwnerApprovalClient`,
+  `runnerFirstEnableApprovalMessage`, the digest, statement and check-code helpers, the
+  nonce/challenge/read-response validators and their types. The message takes the chain id
+  (`solana:mainnet`, `solana:mainnet-beta`, `solana:devnet`, `solana:testnet`) as a validated
+  parameter; the runner recomputes the check code from its own request and refuses a backend
+  code that differs.
+- Execution request v2 for buys: `RunnerExecutionRequestV2`, `RunnerExecutionBuyRequest`,
+  `RunnerDailyCap` (`{ kind: "none" }` or `{ kind: "lamports" }`) and
+  `RunnerExecutionReservationV2`. v1 requests, digests and goldens are unchanged.
+- `RUNNER_POSITION_NOTICES` and `RunnerPositionNotice`: the owner-positions validator accepts an
+  optional `notice` (`exits_unavailable`) on an item.
+- `validateRunnerRuntimeNonce` takes an optional fourth argument `sentAt`. The three refusals that
+  only a clock difference explains carry `details.reason: "clock_skew"` (a lease receipt whose
+  server time is more than 5 s from this clock, a nonce issued more than 5 s ahead, an expired
+  nonce Balchemy issued more than 5 s before the request was sent). Codes, messages and every
+  accept or refuse outcome are unchanged.
+
+### Changed
+
+- Released together with `balchemy@0.6.0`; `@balchemyai/agent-rules` stays at 1.1.0. Publish the
+  SDK first, then the CLI. Restart a running Balchemy runner after upgrading the CLI.
+- Older SDK versions (0.4.x and 0.5.0) refuse an owner-positions item that carries `notice`
+  (closed validator, fails closed). Upgrade the SDK together with the CLI.
+
+---
+
+## [0.5.0] — 2026-11-11
+
+### Added
+
+- `RunnerDecisionReportClient`: runner-signed, bounded per-decision reports for
+  Hub, with the closed action and hold-reason enums it validates.
+- Runtime lease bodies and receipts accept an optional keystore observation
+  (`lock` and the build's fixed `exits` capability, no address or key material),
+  validated by `validateRunnerKeystoreObservation`; older bodies keep their
+  digest.
+
+### Changed
+
+- Released together with `balchemy@0.5.0`; `@balchemyai/agent-rules` stays at
+  1.1.0. Restart a running Balchemy runner after upgrading the CLI.
+
+## [0.4.0] — 2026-11-09
+
+### Added
+
+- Local-runner protocol clients for a user-owned background runner: control,
+  signals, research, trading-wallet binding, execution build and execution
+  submit clients, exported alongside the existing MCP and onboarding clients.
+- Runner-signed swap relay, submission journal and reconciliation client
+  support, and build-time decision provenance re-checks.
+- Live-arming (`live_unarmed` / `live_armed`) and spend-limit support in the
+  runner protocol, plus the exits protocol (sell assessment, exit guard, owner
+  positions) for the runner.
+- Dependency on the shared deterministic rules package
+  `@balchemyai/agent-rules` through the paired CLI.
+
+### Changed
+
+- The telemetry reporter now reports the SDK version read from this package's
+  own `package.json` instead of a hard-coded constant.
+- Added a `LICENSE` file (MIT) to the published package.
+
+### Notes
+
+- The local-runner clients target the runner pairing and shadow-decision
+  protocol. Live trading is not available in this release; execution stays
+  non-executing until every deterministic contract gate is delivered and
+  verified.
+- Publish order: `@balchemyai/agent-rules@1.1.0`, then
+  `@balchemyai/agent-sdk@0.4.0`, then `balchemy@0.4.0`.
+
 ## [0.3.11] — 2026-07-01
 
 ### Fixed

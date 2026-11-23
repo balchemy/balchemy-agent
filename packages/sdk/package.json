@@ -1,9 +1,9 @@
 {
   "name": "@balchemyai/agent-sdk",
-  "version": "0.3.11",
+  "version": "0.9.0",
   "license": "MIT",
   "private": false,
-  "description": "Balchemy external AI agent onboarding and MCP client SDK",
+  "description": "Balchemy local runner SDK: signed runner clients and local LLM adapters",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -17,20 +17,17 @@
     "dist",
     "README.md",
     "CHANGELOG.md",
+    "LICENSE",
     "docs"
   ],
   "keywords": [
     "balchemy",
-    "mcp",
-    "model-context-protocol",
     "ai-agent",
-    "erc8004",
     "solana",
     "evm",
     "base",
     "crypto",
     "trading",
-    "onboarding",
     "defi",
     "wallet",
     "typescript"

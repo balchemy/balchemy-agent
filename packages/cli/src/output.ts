@@ -96,16 +96,3 @@ export function jsonEnvelope(params: {
     error: params.error ?? null,
   };
 }
-
-export function compactValue(value: string, head = 28, tail = 8): string {
-  if (value.length <= head + tail + 3) return value;
-  return `${value.slice(0, head)}...${value.slice(-tail)}`;
-}
-
-export function endpointHost(endpoint: string): string {
-  try {
-    return new URL(endpoint).host;
-  } catch {
-    return "invalid-endpoint";
-  }
-}
